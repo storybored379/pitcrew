@@ -1,0 +1,179 @@
+{
+  "version": 1,
+  "id": "domain-download-failed-immediate",
+  "adapter": "domain",
+  "description": "A client failure ends the wait immediately, excludes the exact release, and spends another reservation for the next choice.",
+  "initial": {
+    "id": 1,
+    "library": 7,
+    "original": {
+      "id": 10,
+      "revision": 1
+    },
+    "constraints": {
+      "language": null,
+      "require_sdr": false
+    },
+    "policy": {
+      "max_grabs": 3,
+      "stage_timeout": 10,
+      "total_timeout": 100
+    },
+    "now": 0
+  },
+  "steps": [
+    {
+      "at": 1,
+      "event": {
+        "SelectRelease": {
+          "release": 40,
+          "access": {
+            "Granted": {
+              "library": 7,
+              "expires_at": 1000
+            }
+          }
+        }
+      },
+      "state": "GrabIntent",
+      "effects": [
+        "Grab"
+      ],
+      "effect_payloads": [
+        {
+          "Grab": {
+            "release": 40,
+            "reservation": 1
+          }
+        }
+      ],
+      "reserved_budget": 1,
+      "active_grabs": 1
+    },
+    {
+      "at": 2,
+      "event": {
+        "Observed": {
+          "intent": {
+            "job": 1,
+            "sequence": 1
+          },
+          "observation": {
+            "GrabAccepted": {
+              "download": 50
+            }
+          }
+        }
+      },
+      "state": "Downloading",
+      "effects": [],
+      "effect_payloads": [],
+      "reserved_budget": 1,
+      "active_grabs": 1
+    },
+    {
+      "at": 3,
+      "event": {
+        "DownloadFailed": {
+          "grab": {
+            "job": 1,
+            "sequence": 1
+          },
+          "download": 50
+        }
+      },
+      "state": "Rejected",
+      "effects": [],
+      "effect_payloads": [],
+      "reserved_budget": 1,
+      "active_grabs": 0
+    },
+    {
+      "at": 3,
+      "event": {
+        "SelectRelease": {
+          "release": 40,
+          "access": {
+            "Granted": {
+              "library": 7,
+              "expires_at": 1000
+            }
+          }
+        }
+      },
+      "state": "Rejected",
+      "effects": [],
+      "effect_payloads": [],
+      "reserved_budget": 1,
+      "active_grabs": 0,
+      "rejected": true
+    },
+    {
+      "at": 4,
+      "event": {
+        "SelectRelease": {
+          "release": 41,
+          "access": {
+            "Granted": {
+              "library": 7,
+              "expires_at": 1000
+            }
+          }
+        }
+      },
+      "state": "GrabIntent",
+      "effects": [
+        "Grab"
+      ],
+      "effect_payloads": [
+        {
+          "Grab": {
+            "release": 41,
+            "reservation": 2
+          }
+        }
+      ],
+      "reserved_budget": 2,
+      "active_grabs": 1
+    },
+    {
+      "at": 4,
+      "event": {
+        "DownloadFailed": {
+          "grab": {
+            "job": 1,
+            "sequence": 1
+          },
+          "download": 50
+        }
+      },
+      "state": "GrabIntent",
+      "effects": [],
+      "effect_payloads": [],
+      "reserved_budget": 2,
+      "active_grabs": 1,
+      "rejected": true
+    },
+    {
+      "at": 5,
+      "event": {
+        "Observed": {
+          "intent": {
+            "job": 1,
+            "sequence": 2
+          },
+          "observation": {
+            "GrabAccepted": {
+              "download": 51
+            }
+          }
+        }
+      },
+      "state": "Downloading",
+      "effects": [],
+      "effect_payloads": [],
+      "reserved_budget": 2,
+      "active_grabs": 1
+    }
+  ]
+}

@@ -1,0 +1,8 @@
+[Unit]
+Description=Pit Crew shadow control plane and viewer intake
+Wants=pitcrew.service pitcrew-web.service
+After=pitcrew.service pitcrew-web.service
+# Enable optional agent/bot/admin units only after configuring their roots/channels.
+
+[Install]
+WantedBy=multi-user.target

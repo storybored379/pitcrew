@@ -1,0 +1,229 @@
+# Pre-alpha schema example. These endpoints are documentation-only placeholders.
+# Every integration is optional; `version = 1` alone is valid for initial setup.
+# Minimum useful planned install: Plex + one arr + rules + any intake channel.
+# This is a schema/design example; adapters are not implemented in pre-alpha.
+# Secrets are references only. Never put a credential directly in this file.
+version = 1
+database = "pitcrew.sqlite"
+
+[plex]
+url = "http://plex.example.invalid:32400"
+owner_token = { env = "PITCREW_PLEX_TOKEN" }
+server_id = "replace-with-configured-server-identifier"
+
+[[arr]]
+id = "movies"
+kind = "radarr"
+url = "http://radarr.example.invalid:7878"
+api_key = { file = "/run/secrets/radarr_api_key" }
+libraries = ["movies-section"]
+
+[[arr]]
+id = "series"
+kind = "sonarr"
+url = "http://sonarr.example.invalid:8989"
+api_key = { env = "PITCREW_SONARR_KEY" }
+libraries = ["series-section"]
+
+[web]
+public_url = "https://help.example.invalid"
+control_plane_url = "https://control.example.invalid"
+control_plane_secret = { env = "PITCREW_CONTROL_SECRET" }
+session_secret = { file = "/run/secrets/pitcrew_session" }
+
+[providers]
+cloud_opt_in = false
+decider = "rules"
+reply_writer = "templates"
+
+# Optional cloud provider; requires cloud_opt_in = true even in shadow.
+# [providers.anthropic]
+# endpoint = "https://api.anthropic.com"
+# model = "set-a-current-model-id"
+# api_key = { env = "ANTHROPIC_API_KEY" }
+# shadow = true
+
+# Optional OpenAI-style providers: any number, compared side by side in shadow.
+# Presets: openai, deepseek, gemini, groq, openrouter (cloud: need cloud_opt_in,
+# an api_key and HTTPS) and ollama, lm_studio, llama_cpp, vllm (local: no key or
+# consent needed; the endpoint must be loopback, a private address or a
+# single-label/.lan/.local/.internal name). `custom` must set endpoint and local.
+# You always choose the model. To act on one, set decider = "openai_compatible"
+# and decider_profile = "<name>" with shadow = false on that profile.
+# [[providers.openai_compatible]]
+# name = "local"
+# preset = "ollama"
+# model = "set-a-model-you-pulled"
+# endpoint = "http://127.0.0.1:11434/v1/chat/completions" # optional; preset default
+# structured = "json_schema"  # or json_object / prompt_only for servers without schema support
+# shadow = true
+#
+# [[providers.openai_compatible]]
+# name = "gpt"
+# preset = "openai"
+# model = "set-a-current-model-id"
+# api_key = { env = "OPENAI_API_KEY" }
+
+# Optional Discord transport; no music-bot features.
+# [discord]
+# token = { env = "PITCREW_DISCORD_TOKEN" }
+# control_plane_url = "https://control.example.invalid"
+# control_plane_secret = { env = "PITCREW_CONTROL_SECRET" }
+
+# Optional agent. Both lexical and resolved file roots must be validated at runtime.
+# [agent]
+# url = "https://agent.example.invalid"
+# shared_secret = { file = "/run/secrets/pitcrew_agent" }
+# media_roots = ["/media"]
+# storage_roots = ["/storage/media"]
+# plex_log_timezone = "Etc/UTC"
+# decode_concurrency = 2
+# [agent.checks]
+# symlink_hop_limit = 32
+# symlink_timeout_ms = 5000
+# mount_timeout_ms = 5000
+# read_timeout_ms = 15000
+# read_offsets_bytes = [0, 1048576, 16777216]
+# read_bytes = 1048576
+# slow_first_byte_ms = 3000
+# slow_bytes_per_second = 1048576
+# header_timeout_seconds = 180
+# Thresholds are installation-specific evidence, not a universal verdict.
+# [agent.server]
+# listen = "127.0.0.1:8790" # loopback only; remote access requires TLS ingress
+# compatibility = false # legacy aliases still REQUIRE Bearer auth
+# max_connections = 32
+# requests_per_minute = 120
+# request_timeout_seconds = 600
+# plex_log_directory = "/var/log/plex" # omit to disable log reading
+# decode_seconds = 10 # per sample, not whole-file certification
+# decode_offsets_percent = [0, 40, 80] # 1–16 strictly increasing percentages, 0..99
+# decode_timeout_seconds = 180 # total wall time for all decode samples
+# filesystem_workers = 4 # hung operations retain slots until they return
+# ffmpeg = "ffmpeg"
+# ffprobe = "ffprobe"
+
+
+# Optional evidence or intake integrations use this same shape:
+# [tracearr] # or tautulli, seerr
+# url = "https://evidence.example.invalid"
+# api_key = { env = "PITCREW_EVIDENCE_KEY" }
+
+# [notifications]
+# relay_url = "https://relay.example.invalid/notify"
+# bearer_token = { env = "PITCREW_RELAY_TOKEN" }
+
+# Generic channels: any number of instances, all independently optional.
+# Legacy [discord], [web], [seerr] remain accepted; prefer [[channels]] for new setups.
+# v1: discord, telegram, web, seerr. v1.x: email, matrix.
+# Later/community: Slack, SMS, WhatsApp official API, Signal/iMessage bridges.
+# [[channels]]
+# id = "telegram"
+# [channels.adapter]
+# kind = "telegram" # or discord, with the same fields
+# token = { env = "PITCREW_TELEGRAM_TOKEN" }
+# control_plane_url = "https://control.example.invalid"
+# control_plane_secret = { env = "PITCREW_CONTROL_SECRET" }
+# Telegram requires the user to message first; adapters declare platform rules.
+# Linking: sign in to web with Plex, then send `link <short-code>` on any channel.
+
+# [[channels]]
+# id = "issues"
+# [channels.adapter]
+# kind = "seerr"
+# url = "https://seerr.example.invalid"
+# api_key = { env = "PITCREW_SEERR_KEY" }
+
+# [[channels]]
+# id = "web"
+# [channels.adapter]
+# kind = "web"
+# public_url = "https://help.example.invalid"
+# control_plane_url = "https://control.example.invalid"
+# control_plane_secret = { env = "PITCREW_CONTROL_SECRET" }
+# session_secret = { file = "/run/secrets/pitcrew_session" }
+
+# [[channels]]
+# id = "mail"
+# [channels.adapter]
+# kind = "email" # v1.x; TLS required for IMAP and SMTP
+# imap_host = "mail.example.invalid"
+# imap_port = 993
+# mail = { smtp_host = "mail.example.invalid", smtp_port = 465, username = "help", password = { env = "MAIL_PASSWORD" }, from_address = "noreply@example.invalid" }
+
+# [[channels]]
+# id = "matrix"
+# [channels.adapter]
+# kind = "matrix" # v1.x
+# homeserver_url = "https://matrix.example.invalid"
+# access_token = { env = "PITCREW_MATRIX_TOKEN" }
+
+# One-way admin notifications are separate from channels and identity linking.
+# Stable job/purpose/recipient keys deduplicate logical alerts. Unconfirmed
+# transport delivery is visible as uncertain; ready messages are never re-created.
+# [[notifiers]]
+# id = "admin"
+# [notifiers.adapter]
+# kind = "ntfy"
+# url = "https://notify.example.invalid/admin"
+# bearer_token = { env = "PITCREW_NOTIFY_TOKEN" }
+
+# [[notifiers]]
+# id = "hook"
+# [notifiers.adapter]
+# kind = "webhook" # Discord/Slack webhook URLs contain secret tokens in the path
+# url = { env = "PITCREW_ADMIN_WEBHOOK_URL" }
+# bearer_token = { env = "PITCREW_WEBHOOK_TOKEN" } # optional extra auth
+
+# [[notifiers]]
+# id = "push"
+# [notifiers.adapter]
+# kind = "pushover"
+# relay_url = "https://relay.example.invalid/notify"
+# bearer_token = { env = "PITCREW_RELAY_TOKEN" }
+
+# [[notifiers]]
+# id = "mail-admin"
+# [notifiers.adapter]
+# kind = "email"
+# mail = { smtp_host = "mail.example.invalid", smtp_port = 465, username = "help", password = { env = "MAIL_PASSWORD" }, from_address = "noreply@example.invalid" }
+# to_address = "noreply@example.invalid"
+
+# Optional backend enrichment. Generic checks work with zero source adapters.
+# APIs must be checked against current upstreams when adapters are implemented.
+# Other kinds: rdt_client, decypharr, zurg, qbittorrent, sabnzbd.
+# [[sources]]
+# id = "source"
+# kind = "nzbdav_infinidysk"
+# url = "https://source.example.invalid"
+# credential = { env = "PITCREW_SOURCE_KEY" }
+# repair_enabled = false
+
+# Deadlines are per client, independent of optional source facts/repair.
+[[download_clients]]
+id = "cached-client"
+profile = "cached" # nzbdav or cached debrid; default download 180 seconds
+# source_id = "source" # only when the optional source above is configured
+[download_clients.deadlines]
+download_seconds = 180
+import_seconds = 120
+decode_seconds = 180
+verify_retry_seconds = 180
+
+# [[download_clients]]
+# id = "torrent-client"
+# profile = "uncached" # default download 3600 seconds; each deadline overridable
+# [download_clients.deadlines]
+# download_seconds = 7200
+# import_seconds = 120
+# decode_seconds = 180
+# verify_retry_seconds = 180
+# profile = "local" uses a 180-second download default; tune to your client.
+
+[budgets]
+global_hour = 12
+global_day = 40
+viewer_hour = 3
+viewer_day = 10
+per_job = 2
+item_cooldown_seconds = 21600

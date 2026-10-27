@@ -1,0 +1,14 @@
+[
+  {
+    "issue_type": "buffering",
+    "answers": [
+      "still-bad"
+    ]
+  },
+  {
+    "issue_type": "poor-quality",
+    "answers": [
+      "comes-and-goes"
+    ]
+  }
+]

@@ -1,0 +1,17 @@
+name: Feature request
+description: Describe a problem or missing integration.
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What are you trying to do? Use synthetic examples without private details.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior and alternatives
+      description: Explain the desired outcome and how it preserves Pit Crew's safety rails.
+    validations:
+      required: true

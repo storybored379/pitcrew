@@ -1,0 +1,31 @@
+[package]
+name = "pitcrew-engine"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+pitcrew-domain = { path = "../domain" }
+pitcrew-store = { path = "../store" }
+pitcrew-arr = { path = "../arr" }
+pitcrew-arbiter = { path = "../arbiter" }
+pitcrew-upstream = { path = "../upstream" }
+pitcrew-notify = { path = "../notify" }
+pitcrew-plex = { path = "../plex" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio = { version = "1", features = ["full", "test-util"] }
+sha2 = "0.10"
+subtle = "2"
+
+[dev-dependencies]
+pitcrew-scenarios = { path = "../scenarios" }
+tempfile = "3"
+proptest.workspace = true
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite"] }
+
+[lints]
+workspace = true

@@ -1,0 +1,99 @@
+{
+  "version": 1,
+  "id": "domain-unknown-access",
+  "adapter": "domain",
+  "description": "Unknown or wrong-library access cannot reserve budget or dispatch a grab.",
+  "initial": {
+    "id": 1,
+    "library": 2,
+    "original": {
+      "id": 3,
+      "revision": 1
+    },
+    "constraints": {
+      "language": "eng",
+      "require_sdr": true
+    },
+    "policy": {
+      "max_grabs": 2,
+      "stage_timeout": 20,
+      "total_timeout": 200
+    },
+    "now": 0
+  },
+  "steps": [
+    {
+      "at": 1,
+      "event": {
+        "SelectRelease": {
+          "release": 4,
+          "access": "Unknown"
+        }
+      },
+      "state": "Picked",
+      "effects": [],
+      "reserved_budget": 0,
+      "active_grabs": 0,
+      "rejected": true
+    },
+    {
+      "at": 2,
+      "event": {
+        "SelectRelease": {
+          "release": 4,
+          "access": {
+            "Granted": {
+              "library": 8,
+              "expires_at": 100
+            }
+          }
+        }
+      },
+      "state": "Picked",
+      "effects": [],
+      "reserved_budget": 0,
+      "active_grabs": 0,
+      "rejected": true
+    },
+    {
+      "at": 3,
+      "event": {
+        "SelectRelease": {
+          "release": 4,
+          "access": {
+            "Granted": {
+              "library": 2,
+              "expires_at": 100
+            }
+          }
+        }
+      },
+      "state": "GrabIntent",
+      "effects": [
+        "Grab"
+      ],
+      "reserved_budget": 1,
+      "active_grabs": 1,
+      "rejected": false
+    },
+    {
+      "at": 4,
+      "event": {
+        "SelectRelease": {
+          "release": 5,
+          "access": {
+            "Granted": {
+              "library": 2,
+              "expires_at": 100
+            }
+          }
+        }
+      },
+      "state": "GrabIntent",
+      "effects": [],
+      "reserved_budget": 1,
+      "active_grabs": 1,
+      "rejected": true
+    }
+  ]
+}

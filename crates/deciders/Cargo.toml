@@ -1,0 +1,25 @@
+[package]
+name = "pitcrew-deciders"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+pitcrew-config = { path = "../config" }
+pitcrew-diagnosis = { path = "../diagnosis" }
+pitcrew-domain = { path = "../domain" }
+pitcrew-upstream = { path = "../upstream" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio = { version = "1", features = ["time", "sync"] }
+url = "2"
+
+[dev-dependencies]
+proptest.workspace = true
+tokio = { version = "1", features = ["macros", "rt", "test-util"] }
+
+[lints]
+workspace = true

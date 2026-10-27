@@ -1,0 +1,34 @@
+name: Bug report
+description: Report a reproducible problem using synthetic, redacted details.
+body:
+  - type: markdown
+    attributes:
+      value: >-
+        For vulnerabilities, follow SECURITY.md and use GitHub private vulnerability
+        reporting. Never include tokens, personal endpoints, account IDs, viewer
+        names, viewing history, or unredacted config/log files in public issues.
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      description: Include the operating system and installation method.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduction
+      description: Give the smallest steps using synthetic data or the offline demo.
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Expected and actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Redacted evidence
+      description: Include only the relevant error or failed test, with private details removed.

@@ -1,0 +1,47 @@
+{
+  "version": 1,
+  "id": "domain-deadline-once",
+  "adapter": "domain",
+  "description": "Deadline emits one admin failure intent and repeated ticks do not duplicate notification.",
+  "initial": {
+    "id": 1,
+    "library": 2,
+    "original": {
+      "id": 3,
+      "revision": 1
+    },
+    "constraints": {
+      "language": "eng",
+      "require_sdr": true
+    },
+    "policy": {
+      "max_grabs": 2,
+      "stage_timeout": 20,
+      "total_timeout": 200
+    },
+    "now": 0
+  },
+  "steps": [
+    {
+      "at": 21,
+      "event": "Tick",
+      "state": "Failed",
+      "effects": [
+        "NotifyAdmin",
+        "NotifyViewerFailure"
+      ],
+      "reserved_budget": 0,
+      "active_grabs": 0,
+      "rejected": false
+    },
+    {
+      "at": 22,
+      "event": "Tick",
+      "state": "Failed",
+      "effects": [],
+      "reserved_budget": 0,
+      "active_grabs": 0,
+      "rejected": true
+    }
+  ]
+}

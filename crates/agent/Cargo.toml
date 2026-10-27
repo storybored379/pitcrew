@@ -1,0 +1,31 @@
+[package]
+name = "pitcrew-agent-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+pitcrew-domain = { path = "../domain" }
+pitcrew-config = { path = "../config" }
+pitcrew-arbiter = { path = "../arbiter" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio = { version = "1", features = ["full"] }
+rustix = { version = "1", features = ["fs", "process"] }
+chrono = "0.4"
+chrono-tz = "0.10"
+regex = "1"
+subtle = "2"
+sha2 = "0.10"
+url = "2"
+httparse = "1"
+
+[dev-dependencies]
+proptest.workspace = true
+tempfile = "3"
+
+[lints]
+workspace = true

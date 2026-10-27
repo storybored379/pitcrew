@@ -1,0 +1,30 @@
+[package]
+name = "pitcrew-web"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+axum = "0.8"
+pitcrew-domain = { path = "../../crates/domain" }
+pitcrew-intake = { path = "../../crates/intake" }
+pitcrew-sync = { path = "../../crates/sync" }
+pitcrew-intake-store = { path = "../../crates/intake-store" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "json"] }
+url = "2"
+getrandom = "0.4"
+subtle = "2"
+tokio = { version = "1", features = ["full"] }
+
+[dev-dependencies]
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite"] }
+tower = { version = "0.5", features = ["util"] }
+tempfile = "3"
+
+[lints]
+workspace = true

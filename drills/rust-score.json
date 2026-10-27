@@ -1,0 +1,53 @@
+{
+  "intake": {
+    "passed": 254,
+    "observed": 254,
+    "expected": 254
+  },
+  "title": {
+    "passed": 254,
+    "observed": 254,
+    "expected": 254
+  },
+  "episode": {
+    "passed": 254,
+    "observed": 254,
+    "expected": 254
+  },
+  "library": {
+    "passed": 254,
+    "observed": 254,
+    "expected": 254
+  },
+  "symptoms": {
+    "passed": 254,
+    "observed": 254,
+    "expected": 254
+  },
+  "suspicious": {
+    "passed": 254,
+    "observed": 254,
+    "expected": 254
+  },
+  "reply": {
+    "passed": 254,
+    "observed": 254,
+    "expected": 254
+  },
+  "diagnosis": {
+    "passed": 0,
+    "observed": 0,
+    "expected": 1
+  },
+  "ready": {
+    "passed": 0,
+    "observed": 0,
+    "expected": 1
+  },
+  "safe": {
+    "passed": 254,
+    "observed": 254,
+    "expected": 254
+  },
+  "failures": []
+}

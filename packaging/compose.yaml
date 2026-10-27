@@ -1,0 +1,78 @@
+# Linux host networking preserves the application's loopback-only listeners.
+# .env is selected explicitly by the README command, relative to the checkout.
+x-common: &common
+  build:
+    context: ..
+    dockerfile: Dockerfile.stack
+  image: ${PITCREW_IMAGE:-pitcrew-stack:local}
+  user: "${PITCREW_UID:?Set PITCREW_UID in .env}:${PITCREW_GID:?Set PITCREW_GID in .env}"
+  network_mode: host
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  restart: unless-stopped
+  init: true
+  tmpfs:
+    - /tmp:size=64m,mode=1777
+  volumes:
+    - "${PITCREW_HOME:?Set an absolute PITCREW_HOME in .env}:/config:ro"
+    - "${PITCREW_HOME}/state:/config/state"
+
+services:
+  control:
+    <<: *common
+    command: ["pitcrew", "--config", "/config/pitcrew.toml"]
+    healthcheck:
+      test: ["CMD", "curl", "--noproxy", "*", "--fail", "--silent", "--max-time", "4", "http://127.0.0.1:${PITCREW_CONTROL_PORT:-7400}/healthz"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+  web:
+    <<: *common
+    command: ["pitcrew", "web", "--config", "/config/pitcrew.toml"]
+    depends_on:
+      control:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "--noproxy", "*", "--fail", "--silent", "--max-time", "4", "http://127.0.0.1:${PITCREW_WEB_PORT:-7401}/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+  admin:
+    <<: *common
+    profiles: ["admin"]
+    command: ["pitcrew-admin", "--config", "/config/pitcrew.toml"]
+    depends_on:
+      web:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "--noproxy", "*", "--fail", "--silent", "--max-time", "4", "http://127.0.0.1:${PITCREW_ADMIN_PORT:-7402}/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+  bot:
+    <<: *common
+    profiles: ["channels"]
+    command: ["pitcrew-bot", "--config", "/config/pitcrew.toml"]
+    depends_on:
+      control:
+        condition: service_healthy
+    # The bot has no HTTP listener. Do not inherit the control healthcheck.
+    healthcheck:
+      disable: true
+  agent:
+    <<: *common
+    profiles: ["agent"]
+    command: ["pitcrew-agent", "--config", "/config/pitcrew.toml"]
+    # Preserve exact upstream paths in an override; these defaults are examples.
+    volumes:
+      - "${PITCREW_HOME}:/config:ro"
+      - "${PITCREW_MEDIA:-./media}:/media:ro"
+      - "${PITCREW_STORAGE:-./storage}:/storage:ro"
+    healthcheck:
+      # Liveness only: an unauthenticated request must reach the auth boundary.
+      test: ["CMD-SHELL", "test \"$$(curl --noproxy '*' --silent --max-time 4 --output /dev/null --write-out '%{http_code}' http://127.0.0.1:${PITCREW_AGENT_PORT:-8790}/v1/health)\" = 401"]
+      interval: 30s
+      timeout: 5s
+      retries: 3

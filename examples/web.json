@@ -1,0 +1,18 @@
+{
+  "database": "intake.sqlite",
+  "public_origin": "http://127.0.0.1:7401",
+  "plex_server_url": "https://media.example.invalid/",
+  "plex_server_id": "configured-machine-identifier",
+  "client_id": "stable-installation-identifier",
+  "catalog": [
+    {
+      "id": "sample-episode-hd",
+      "title": "Signal Garden",
+      "library_id": "2",
+      "library_name": "Series",
+      "resolution": "hd",
+      "season": 2,
+      "episode": 3
+    }
+  ]
+}

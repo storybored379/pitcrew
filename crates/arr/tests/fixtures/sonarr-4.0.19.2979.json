@@ -1,0 +1,11 @@
+{
+  "status": {"appName":"Sonarr","version":"4.0.19.2979","databaseType":"SQLite","databaseVersion":"3.50.4","urlBase":""},
+  "item": {"id":101,"seriesId":201,"episodeFileId":301,"seasonNumber":1,"episodeNumber":2,"hasFile":true,"monitored":true,"unverifiedSceneNumbering":false},
+  "file": {"id":301,"seriesId":201,"seasonNumber":1,"relativePath":"Invented.Show.S01E02.mkv","path":"/library/invented/Invented.Show.S01E02.mkv","size":734003200,"dateAdded":"2026-01-02T03:04:05Z","quality":{"quality":{"id":4,"name":"HDTV-720p","source":"television","resolution":720},"revision":{"version":1,"real":0,"isRepack":false}},"mediaInfo":{"videoCodec":"h264","audioCodec":"aac"}},
+  "queue": {"page":1,"pageSize":100,"totalRecords":0,"records":[]},
+  "history": {"page":1,"pageSize":100,"totalRecords":2,"records":[
+    {"id":401,"episodeId":101,"seriesId":201,"sourceTitle":"Invented.Show.S01E02.SYNTHETIC","date":"2026-01-02T03:04:05Z","downloadId":"synthetic-download-a","eventType":"downloadFolderImported","data":{"fileId":"301","droppedPath":"/downloads/Invented.Show.S01E02.mkv","importedPath":"/library/invented/Invented.Show.S01E02.mkv","downloadClient":"SABnzbd","downloadClientName":"synthetic-client","size":"734003200"}},
+    {"id":402,"episodeId":102,"seriesId":201,"sourceTitle":"Invented.Show.S01E03.SYNTHETIC","date":"2026-01-02T03:05:05Z","downloadId":"synthetic-download-b","eventType":"downloadFailed","data":{"downloadClient":"SABnzbd","downloadClientName":null,"message":"Download was marked as failed","releaseGroup":null,"size":null}}
+  ]},
+  "blocklist": {"page":1,"pageSize":100,"totalRecords":1,"records":[{"id":501,"seriesId":201,"episodeIds":[102],"sourceTitle":"Invented.Show.S01E03.SYNTHETIC","date":"2026-01-02T03:05:05Z","protocol":"usenet","message":"Download was marked as failed"}]}
+}

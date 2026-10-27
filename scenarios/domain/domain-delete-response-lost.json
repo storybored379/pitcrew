@@ -1,0 +1,199 @@
+{
+  "version": 1,
+  "id": "domain-delete-response-lost",
+  "adapter": "domain",
+  "description": "Record rejected-download deletion before mutation; reconcile absent queue entry before retry.",
+  "initial": {
+    "id": 1,
+    "library": 2,
+    "original": {
+      "id": 3,
+      "revision": 1
+    },
+    "constraints": {
+      "language": "eng",
+      "require_sdr": true
+    },
+    "policy": {
+      "max_grabs": 2,
+      "stage_timeout": 20,
+      "total_timeout": 200
+    },
+    "now": 0
+  },
+  "steps": [
+    {
+      "at": 1,
+      "event": {
+        "SelectRelease": {
+          "release": 4,
+          "access": {
+            "Granted": {
+              "library": 2,
+              "expires_at": 100
+            }
+          }
+        }
+      },
+      "state": "GrabIntent",
+      "effects": [
+        "Grab"
+      ],
+      "reserved_budget": 1,
+      "active_grabs": 1,
+      "rejected": false
+    },
+    {
+      "at": 2,
+      "event": {
+        "Observed": {
+          "intent": {
+            "job": 1,
+            "sequence": 1
+          },
+          "observation": {
+            "GrabAccepted": {
+              "download": 5
+            }
+          }
+        }
+      },
+      "state": "Downloading",
+      "effects": [],
+      "reserved_budget": 1,
+      "active_grabs": 1,
+      "rejected": false
+    },
+    {
+      "at": 3,
+      "event": {
+        "Observed": {
+          "intent": {
+            "job": 1,
+            "sequence": 1
+          },
+          "observation": {
+            "DownloadCompleted": {
+              "download": 5,
+              "file": {
+                "id": 6,
+                "revision": 1
+              }
+            }
+          }
+        }
+      },
+      "state": "Downloaded",
+      "effects": [
+        "DecodeDownload"
+      ],
+      "reserved_budget": 1,
+      "active_grabs": 1,
+      "rejected": false
+    },
+    {
+      "at": 4,
+      "event": {
+        "Observed": {
+          "intent": {
+            "job": 1,
+            "sequence": 2
+          },
+          "observation": {
+            "DownloadDecoded": {
+              "file": {
+                "id": 6,
+                "revision": 1
+              },
+              "good": false
+            }
+          }
+        }
+      },
+      "state": "DownloadRejected",
+      "effects": [],
+      "reserved_budget": 1,
+      "active_grabs": 1,
+      "rejected": false
+    },
+    {
+      "at": 5,
+      "event": {
+        "RejectDownload": {
+          "access": {
+            "Granted": {
+              "library": 2,
+              "expires_at": 100
+            }
+          }
+        }
+      },
+      "state": "RejectIntent",
+      "effects": [
+        "RemoveRejectedDownload"
+      ],
+      "reserved_budget": 1,
+      "active_grabs": 1,
+      "rejected": false
+    },
+    {
+      "at": 6,
+      "event": {
+        "Observed": {
+          "intent": {
+            "job": 1,
+            "sequence": 3
+          },
+          "observation": "DeleteAmbiguous"
+        }
+      },
+      "state": "RejectReconciling",
+      "effects": [
+        "ReconcileDelete"
+      ],
+      "reserved_budget": 1,
+      "active_grabs": 1,
+      "rejected": false
+    },
+    {
+      "at": 7,
+      "event": {
+        "Observed": {
+          "intent": {
+            "job": 1,
+            "sequence": 4
+          },
+          "observation": {
+            "DeleteReconciled": "Absent"
+          }
+        }
+      },
+      "state": "Rejected",
+      "effects": [],
+      "reserved_budget": 1,
+      "active_grabs": 0,
+      "rejected": false
+    },
+    {
+      "at": 8,
+      "event": {
+        "SelectRelease": {
+          "release": 8,
+          "access": {
+            "Granted": {
+              "library": 2,
+              "expires_at": 100
+            }
+          }
+        }
+      },
+      "state": "GrabIntent",
+      "effects": [
+        "Grab"
+      ],
+      "reserved_budget": 2,
+      "active_grabs": 1,
+      "rejected": false
+    }
+  ]
+}

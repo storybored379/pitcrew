@@ -1,0 +1,42 @@
+[package]
+name = "pitcrew"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+pitcrew-config = { path = "../../crates/config" }
+pitcrew-setup = { path = "../../crates/setup" }
+pitcrew-domain = { path = "../../crates/domain" }
+pitcrew-store = { path = "../../crates/store" }
+pitcrew-engine = { path = "../../crates/engine" }
+pitcrew-arbiter = { path = "../../crates/arbiter" }
+pitcrew-arr = { path = "../../crates/arr" }
+pitcrew-upstream = { path = "../../crates/upstream" }
+pitcrew-plex = { path = "../../crates/plex" }
+pitcrew-web = { path = "../pitcrew-web" }
+pitcrew-intake-store = { path = "../../crates/intake-store" }
+pitcrew-intake = { path = "../../crates/intake" }
+pitcrew-bridge = { path = "../../crates/bridge" }
+pitcrew-sync = { path = "../../crates/sync" }
+pitcrew-diagnosis = { path = "../../crates/diagnosis" }
+pitcrew-deciders = { path = "../../crates/deciders" }
+url = "2"
+sha2 = "0.10"
+axum = "0.8"
+serde.workspace = true
+serde_json.workspace = true
+tokio = { version = "1", features = ["full"] }
+httparse = "1"
+base64 = "0.22"
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite"] }
+tempfile = "3"
+
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }

@@ -1,0 +1,250 @@
+{
+  "version": 1,
+  "id": "domain-auto-import-retry-recovers",
+  "adapter": "domain",
+  "description": "An upgrade auto-imported before decode is rechecked after the fresh-import delay and sends ready only for exact verified bytes.",
+  "initial": {
+    "id": 1,
+    "library": 7,
+    "original": {
+      "id": 10,
+      "revision": 1
+    },
+    "constraints": {
+      "language": null,
+      "require_sdr": false
+    },
+    "policy": {
+      "max_grabs": 3,
+      "stage_timeout": 10,
+      "total_timeout": 100
+    },
+    "now": 0
+  },
+  "steps": [
+    {
+      "at": 1,
+      "event": {
+        "SelectRelease": {
+          "release": 40,
+          "access": {
+            "Granted": {
+              "library": 7,
+              "expires_at": 1000
+            }
+          }
+        }
+      },
+      "state": "GrabIntent",
+      "effects": [
+        "Grab"
+      ],
+      "effect_payloads": [
+        {
+          "Grab": {
+            "release": 40,
+            "reservation": 1
+          }
+        }
+      ],
+      "reserved_budget": 1,
+      "active_grabs": 1
+    },
+    {
+      "at": 2,
+      "event": {
+        "Observed": {
+          "intent": {
+            "job": 1,
+            "sequence": 1
+          },
+          "observation": {
+            "GrabAccepted": {
+              "download": 50
+            }
+          }
+        }
+      },
+      "state": "Downloading",
+      "effects": [],
+      "effect_payloads": [],
+      "reserved_budget": 1,
+      "active_grabs": 1
+    },
+    {
+      "at": 3,
+      "event": {
+        "AutoImported": {
+          "grab": {
+            "job": 1,
+            "sequence": 1
+          },
+          "download": 50,
+          "file": {
+            "id": 30,
+            "revision": 1
+          }
+        }
+      },
+      "state": "Imported",
+      "effects": [
+        "DecodeImported"
+      ],
+      "effect_payloads": [
+        {
+          "DecodeImported": {
+            "file": {
+              "id": 30,
+              "revision": 1
+            }
+          }
+        }
+      ],
+      "reserved_budget": 1,
+      "active_grabs": 0
+    },
+    {
+      "at": 4,
+      "event": {
+        "Observed": {
+          "intent": {
+            "job": 1,
+            "sequence": 2
+          },
+          "observation": {
+            "ImportedDecoded": {
+              "file": {
+                "id": 30,
+                "revision": 1
+              },
+              "good": false
+            }
+          }
+        }
+      },
+      "state": "VerifyRetry",
+      "effects": [],
+      "effect_payloads": [],
+      "reserved_budget": 1,
+      "active_grabs": 0
+    },
+    {
+      "at": 13,
+      "event": "Tick",
+      "state": "VerifyRetry",
+      "effects": [],
+      "effect_payloads": [],
+      "reserved_budget": 1,
+      "active_grabs": 0
+    },
+    {
+      "at": 14,
+      "event": "Tick",
+      "state": "Imported",
+      "effects": [
+        "DecodeImported"
+      ],
+      "effect_payloads": [
+        {
+          "DecodeImported": {
+            "file": {
+              "id": 30,
+              "revision": 1
+            }
+          }
+        }
+      ],
+      "reserved_budget": 1,
+      "active_grabs": 0
+    },
+    {
+      "at": 15,
+      "event": {
+        "Observed": {
+          "intent": {
+            "job": 1,
+            "sequence": 3
+          },
+          "observation": {
+            "ImportedDecoded": {
+              "file": {
+                "id": 30,
+                "revision": 1
+              },
+              "good": true
+            }
+          }
+        }
+      },
+      "state": "Imported",
+      "effects": [
+        "CheckTarget"
+      ],
+      "effect_payloads": [
+        {
+          "CheckTarget": {
+            "file": {
+              "id": 30,
+              "revision": 1
+            },
+            "constraints": {
+              "language": null,
+              "require_sdr": false
+            }
+          }
+        }
+      ],
+      "reserved_budget": 1,
+      "active_grabs": 0
+    },
+    {
+      "at": 16,
+      "event": {
+        "Observed": {
+          "intent": {
+            "job": 1,
+            "sequence": 4
+          },
+          "observation": {
+            "TargetChecked": {
+              "file": {
+                "id": 30,
+                "revision": 1
+              },
+              "plex_file": {
+                "id": 30,
+                "revision": 1
+              },
+              "constraints_satisfied": true
+            }
+          }
+        }
+      },
+      "state": "Verified",
+      "effects": [],
+      "effect_payloads": [],
+      "reserved_budget": 1,
+      "active_grabs": 0
+    },
+    {
+      "at": 17,
+      "event": "QueueReady",
+      "state": "Done",
+      "effects": [
+        "NotifyReady"
+      ],
+      "effect_payloads": [
+        {
+          "NotifyReady": {
+            "file": {
+              "id": 30,
+              "revision": 1
+            }
+          }
+        }
+      ],
+      "reserved_budget": 1,
+      "active_grabs": 0
+    }
+  ]
+}

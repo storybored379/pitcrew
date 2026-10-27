@@ -1,0 +1,20 @@
+[package]
+name = "pitcrew-arr"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+pitcrew-upstream = { path = "../upstream" }
+pitcrew-arbiter = { path = "../arbiter" }
+pitcrew-domain = { path = "../domain" }
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt"] }
+
+[lints]
+workspace = true

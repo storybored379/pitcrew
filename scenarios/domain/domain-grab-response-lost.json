@@ -1,0 +1,108 @@
+{
+  "version": 1,
+  "id": "domain-grab-response-lost",
+  "adapter": "domain",
+  "description": "Persist an uncertain grab and reconcile a blocked accepted download without a duplicate grab.",
+  "initial": {
+    "id": 1,
+    "library": 2,
+    "original": {
+      "id": 3,
+      "revision": 1
+    },
+    "constraints": {
+      "language": "eng",
+      "require_sdr": true
+    },
+    "policy": {
+      "max_grabs": 2,
+      "stage_timeout": 20,
+      "total_timeout": 200
+    },
+    "now": 0
+  },
+  "steps": [
+    {
+      "at": 1,
+      "event": {
+        "SelectRelease": {
+          "release": 4,
+          "access": {
+            "Granted": {
+              "library": 2,
+              "expires_at": 100
+            }
+          }
+        }
+      },
+      "state": "GrabIntent",
+      "effects": [
+        "Grab"
+      ],
+      "reserved_budget": 1,
+      "active_grabs": 1,
+      "rejected": false
+    },
+    {
+      "at": 2,
+      "event": {
+        "Observed": {
+          "intent": {
+            "job": 1,
+            "sequence": 1
+          },
+          "observation": "GrabAmbiguous"
+        }
+      },
+      "state": "GrabReconciling",
+      "effects": [
+        "ReconcileGrab"
+      ],
+      "reserved_budget": 1,
+      "active_grabs": 1,
+      "rejected": false
+    },
+    {
+      "at": 3,
+      "event": {
+        "SelectRelease": {
+          "release": 4,
+          "access": {
+            "Granted": {
+              "library": 2,
+              "expires_at": 100
+            }
+          }
+        }
+      },
+      "state": "GrabReconciling",
+      "effects": [],
+      "reserved_budget": 1,
+      "active_grabs": 1,
+      "rejected": true
+    },
+    {
+      "at": 4,
+      "event": {
+        "Observed": {
+          "intent": {
+            "job": 1,
+            "sequence": 2
+          },
+          "observation": {
+            "GrabReconciled": {
+              "Accepted": {
+                "download": 5
+              }
+            }
+          }
+        }
+      },
+      "state": "Downloading",
+      "effects": [],
+      "reserved_budget": 1,
+      "active_grabs": 1,
+      "rejected": false
+    }
+  ]
+}

@@ -1,0 +1,26 @@
+{
+  "bind": "127.0.0.1:0",
+  "database": "test-intake.sqlite",
+  "catalog": [
+    {
+      "id": "synthetic-glass-harbor",
+      "title": "The Glass Harbor",
+      "aliases": [],
+      "library_id": "synthetic-films",
+      "library_name": "Films",
+      "resolution": "hd",
+      "season": null,
+      "episode": null
+    }
+  ],
+  "principals": [
+    {
+      "bearer_token": "replace-this-example-with-a-random-secret",
+      "viewer": {
+        "account_id": "synthetic-viewer",
+        "library_ids": ["synthetic-films"]
+      },
+      "expires_at": 4102444800
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+FROM rust:1.99.1-bookworm AS build
+WORKDIR /build
+COPY . .
+RUN cargo build --locked --release -p pitcrew -p pitcrew-web -p pitcrew-bot -p pitcrew-agent -p pitcrew-admin
+
+FROM debian:bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl ffmpeg tzdata \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --gid 10001 pitcrew \
+    && useradd --uid 10001 --gid 10001 --no-create-home pitcrew \
+    && install -d -o pitcrew -g pitcrew -m 0700 /var/lib/pitcrew
+COPY --from=build /build/target/release/pitcrew /build/target/release/pitcrew-web /build/target/release/pitcrew-bot /build/target/release/pitcrew-agent /build/target/release/pitcrew-admin /usr/local/bin/
+USER 10001:10001
+WORKDIR /
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+    CMD curl --noproxy '*' --fail --silent --max-time 4 http://127.0.0.1:7400/healthz || exit 1
+CMD ["pitcrew", "--config", "/config/pitcrew.toml"]

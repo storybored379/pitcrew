@@ -1,0 +1,26 @@
+[package]
+name = "pitcrew-sync"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+pitcrew-intake = { path = "../intake" }
+pitcrew-domain = { path = "../domain" }
+pitcrew-upstream = { path = "../upstream" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+roxmltree = "0.21"
+
+[dev-dependencies]
+pitcrew-intake-store = { path = "../intake-store" }
+pitcrew-diagnosis = { path = "../diagnosis" }
+tempfile = "3"
+tokio = { version = "1", features = ["macros", "rt"] }
+proptest.workspace = true
+
+[lints]
+workspace = true

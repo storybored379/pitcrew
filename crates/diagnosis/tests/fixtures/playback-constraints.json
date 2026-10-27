@@ -1,0 +1,302 @@
+[
+  {
+    "id": "a3",
+    "evidence": {
+      "instance": "uhd-library",
+      "is_4k": true,
+      "probe": {
+        "opened": true,
+        "video_streams": 1
+      },
+      "decode": null,
+      "plex": null,
+      "provider": null,
+      "file_mbps": 16,
+      "wan": true,
+      "analyzed_recently": false,
+      "sess": {
+        "transcodes": 2,
+        "stalled_sessions": 2,
+        "product": "Plex for Amazon FireTV"
+      },
+      "dr": {
+        "dv": true,
+        "hdr": true,
+        "p5": false,
+        "profile": 8
+      },
+      "hd_library": "HD Library"
+    },
+    "constraint": null
+  },
+  {
+    "id": "a6",
+    "evidence": {
+      "instance": "uhd-library",
+      "is_4k": true,
+      "probe": {
+        "opened": true,
+        "video_streams": 1
+      },
+      "decode": null,
+      "plex": null,
+      "provider": null,
+      "file_mbps": 16,
+      "wan": true,
+      "analyzed_recently": false,
+      "sess": {
+        "transcodes": 2,
+        "stalled_sessions": 2,
+        "product": "Plex for Amazon FireTV"
+      },
+      "dr": {
+        "dv": true,
+        "hdr": true,
+        "p5": false,
+        "profile": 8
+      },
+      "hd_library": null
+    },
+    "constraint": null
+  },
+  {
+    "id": "a9",
+    "evidence": {
+      "instance": "uhd-library",
+      "is_4k": true,
+      "probe": {
+        "opened": true,
+        "video_streams": 1
+      },
+      "decode": null,
+      "plex": null,
+      "provider": null,
+      "file_mbps": 16,
+      "wan": true,
+      "analyzed_recently": false,
+      "sess": {
+        "transcodes": 2,
+        "stalled_sessions": 2,
+        "product": "Plex for Amazon FireTV"
+      },
+      "dr": {
+        "dv": true,
+        "hdr": false,
+        "p5": true,
+        "profile": 5
+      },
+      "hd_library": "HD Library"
+    },
+    "constraint": "hdr_ok_no_p5"
+  },
+  {
+    "id": "a12",
+    "evidence": {
+      "instance": "uhd-library",
+      "is_4k": true,
+      "probe": {
+        "opened": true,
+        "video_streams": 1
+      },
+      "decode": null,
+      "plex": null,
+      "provider": null,
+      "file_mbps": 16,
+      "wan": true,
+      "analyzed_recently": false,
+      "sess": {
+        "transcodes": 2,
+        "stalled_sessions": 2,
+        "product": "Plex for Amazon FireTV"
+      },
+      "dr": {
+        "dv": true,
+        "hdr": false,
+        "p5": true,
+        "profile": 5
+      },
+      "hd_library": null
+    },
+    "constraint": "hdr_ok_no_p5"
+  },
+  {
+    "id": "a15",
+    "evidence": {
+      "instance": "uhd-library",
+      "is_4k": true,
+      "probe": {
+        "opened": true,
+        "video_streams": 1
+      },
+      "decode": null,
+      "plex": null,
+      "provider": null,
+      "file_mbps": 16,
+      "wan": true,
+      "analyzed_recently": false,
+      "sess": {
+        "transcodes": 2,
+        "stalled_sessions": 2,
+        "product": "Plex for Amazon FireTV"
+      },
+      "dr": {
+        "dv": false,
+        "hdr": true,
+        "p5": false,
+        "profile": null
+      },
+      "hd_library": "HD Library"
+    },
+    "constraint": null
+  },
+  {
+    "id": "a18",
+    "evidence": {
+      "instance": "uhd-library",
+      "is_4k": true,
+      "probe": {
+        "opened": true,
+        "video_streams": 1
+      },
+      "decode": null,
+      "plex": null,
+      "provider": null,
+      "file_mbps": 16,
+      "wan": true,
+      "analyzed_recently": false,
+      "sess": {
+        "transcodes": 2,
+        "stalled_sessions": 2,
+        "product": "Plex for Amazon FireTV"
+      },
+      "dr": {
+        "dv": false,
+        "hdr": true,
+        "p5": false,
+        "profile": null
+      },
+      "hd_library": null
+    },
+    "constraint": null
+  },
+  {
+    "id": "a21",
+    "evidence": {
+      "instance": "uhd-library",
+      "is_4k": true,
+      "probe": {
+        "opened": true,
+        "video_streams": 1
+      },
+      "decode": null,
+      "plex": null,
+      "provider": null,
+      "file_mbps": 16,
+      "wan": true,
+      "analyzed_recently": false,
+      "sess": {
+        "transcodes": 2,
+        "stalled_sessions": 2,
+        "product": "Plex for Amazon FireTV"
+      },
+      "dr": {
+        "dv": false,
+        "hdr": false,
+        "p5": false,
+        "profile": null
+      },
+      "hd_library": "HD Library"
+    },
+    "constraint": null
+  },
+  {
+    "id": "a24",
+    "evidence": {
+      "instance": "uhd-library",
+      "is_4k": true,
+      "probe": {
+        "opened": true,
+        "video_streams": 1
+      },
+      "decode": null,
+      "plex": null,
+      "provider": null,
+      "file_mbps": 16,
+      "wan": true,
+      "analyzed_recently": false,
+      "sess": {
+        "transcodes": 2,
+        "stalled_sessions": 2,
+        "product": "Plex for Amazon FireTV"
+      },
+      "dr": {
+        "dv": false,
+        "hdr": false,
+        "p5": false,
+        "profile": null
+      },
+      "hd_library": null
+    },
+    "constraint": null
+  },
+  {
+    "id": "a27",
+    "evidence": {
+      "instance": "uhd-library",
+      "is_4k": true,
+      "probe": {
+        "opened": true,
+        "video_streams": 1
+      },
+      "decode": null,
+      "plex": null,
+      "provider": null,
+      "file_mbps": 16,
+      "wan": true,
+      "analyzed_recently": false,
+      "sess": {
+        "transcodes": 2,
+        "stalled_sessions": 2,
+        "product": "Plex for Amazon FireTV"
+      },
+      "dr": {
+        "dv": true,
+        "hdr": false,
+        "p5": true,
+        "profile": 5
+      },
+      "hd_library": null
+    },
+    "constraint": "hdr_ok_no_p5"
+  },
+  {
+    "id": "a30",
+    "evidence": {
+      "instance": "uhd-library",
+      "is_4k": false,
+      "probe": {
+        "opened": true,
+        "video_streams": 1
+      },
+      "decode": null,
+      "plex": null,
+      "provider": null,
+      "file_mbps": 16,
+      "wan": true,
+      "analyzed_recently": false,
+      "sess": {
+        "transcodes": 2,
+        "stalled_sessions": 2,
+        "product": "Plex for Amazon FireTV"
+      },
+      "dr": {
+        "dv": true,
+        "hdr": true,
+        "p5": false,
+        "profile": 8
+      },
+      "hd_library": null
+    },
+    "constraint": "sdr"
+  }
+]

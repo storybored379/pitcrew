@@ -1,0 +1,62 @@
+# Phase 2 read-only shadow. No credentials are present in this file.
+version = 1
+database = "/var/lib/pitcrew/pitcrew.sqlite"
+
+[engine]
+mode = "shadow"
+listen = "127.0.0.1:8791"
+control_secret = { file = "/run/secrets/pitcrew-control" }
+# Enable only when deliberately configuring read-only upstream observation.
+poll_enabled = false
+poll_seconds = 30
+
+[budgets]
+global_hour = 12
+global_day = 40
+viewer_hour = 3
+viewer_day = 10
+per_job = 2
+item_cooldown_seconds = 21600
+
+[[download_clients]]
+id = "cached"
+profile = "cached"
+[[download_clients]]
+id = "uncached"
+profile = "uncached"
+
+[[arr]]
+id = "series-main"
+kind = "sonarr"
+url = "http://sonarr.example.invalid:8989"
+api_key = { file = "/run/secrets/series-main-api" }
+webhook_secret = { file = "/run/secrets/series-main-webhook" }
+libraries = ["series-main"]
+[[arr]]
+id = "series-alt"
+kind = "sonarr"
+url = "http://sonarr-alt.example.invalid:8989"
+api_key = { file = "/run/secrets/series-alt-api" }
+webhook_secret = { file = "/run/secrets/series-alt-webhook" }
+libraries = ["series-alt"]
+[[arr]]
+id = "movies-main"
+kind = "radarr"
+url = "http://radarr.example.invalid:7878"
+api_key = { file = "/run/secrets/movies-main-api" }
+webhook_secret = { file = "/run/secrets/movies-main-webhook" }
+libraries = ["movies-main"]
+[[arr]]
+id = "movies-alt"
+kind = "radarr"
+url = "http://radarr-alt.example.invalid:7878"
+api_key = { file = "/run/secrets/movies-alt-api" }
+webhook_secret = { file = "/run/secrets/movies-alt-webhook" }
+libraries = ["movies-alt"]
+[[arr]]
+id = "movies-extra"
+kind = "radarr"
+url = "http://radarr-extra.example.invalid:7878"
+api_key = { file = "/run/secrets/movies-extra-api" }
+webhook_secret = { file = "/run/secrets/movies-extra-webhook" }
+libraries = ["movies-extra"]

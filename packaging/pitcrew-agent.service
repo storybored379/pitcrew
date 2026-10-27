@@ -1,0 +1,32 @@
+[Unit]
+Description=Pit Crew local media diagnostics
+After=local-fs.target
+PartOf=pitcrew-stack.target
+
+[Service]
+Type=simple
+User=pitcrew
+Group=pitcrew
+ExecStart=/usr/local/bin/pitcrew-agent --config /etc/pitcrew/pitcrew.toml
+UMask=0077
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+# Set installation-specific read permissions with a systemd drop-in. Include both
+# logical library roots and final symlink destinations; also allow Plex log reads.
+# SupplementaryGroups=media
+# LoadCredential=agent-secret:/etc/pitcrew/agent-secret
+# In pitcrew.toml use shared_secret.file = /run/credentials/pitcrew-agent.service/agent-secret
+
+[Install]
+WantedBy=multi-user.target

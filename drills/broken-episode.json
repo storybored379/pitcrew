@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "catalog": [{"id":"signal-episode","title":"Seabound Signal","library_id":"7","library_name":"Standard","resolution":"hd","season":1,"episode":2}],
+  "cases": [{
+    "id":"broken-episode", "tags":["repair","synthetic"],
+    "viewer":{"account_id":"synthetic-viewer","library_ids":["7"]},
+    "turns":[{"text":"Seabound Signal S1E2 won't play", "expected": {
+      "outcome":"report", "targets":[{"title":"Seabound Signal","season":1,"episode":2,"library":"7","kinds":["playback"]}],
+      "reply_contains":["playback check", "ready to watch"], "reply_omits":["secret"],
+      "diagnosis":"broken", "ready_within_ms":300000
+    }}]
+  }]
+}

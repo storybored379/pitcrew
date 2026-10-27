@@ -1,0 +1,12 @@
+/target/
+/mutants.out*/
+.env
+*.sqlite*
+*.db
+/.agents/
+/packaging/secrets/
+/packaging/state/
+/packaging/media/
+/packaging/storage/
+/.privacy-denylist
+/runtime/

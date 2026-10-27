@@ -1,0 +1,23 @@
+# Add this section to the shared stack configuration. All values are synthetic.
+[admin]
+database = "admin.sqlite"
+engine_database = "pitcrew.sqlite"
+intake_database = "intake.sqlite"
+bind = "127.0.0.1:7402"
+public_origin = "http://127.0.0.1:7402"
+plex_auth_url = "https://plex.tv/"
+client_id = "pitcrew-admin-installation-id"
+admin_account_ids = ["1001"] # Replace with allowed Plex account IDs.
+
+# Optional. Omit to disable immediate API actions; all data remains readable.
+# [admin.api]
+# url = "http://127.0.0.1:8791"
+# secret = { env = "PITCREW_ADMIN_SECRET" }
+
+# Optional local rates for estimates only. Set all four classes explicitly.
+# Units: millionths of USD per million tokens. No prices are embedded.
+# [admin.rates.anthropic]
+# input_microusd_per_million = 0
+# output_microusd_per_million = 0
+# cache_creation_microusd_per_million = 0
+# cache_read_microusd_per_million = 0

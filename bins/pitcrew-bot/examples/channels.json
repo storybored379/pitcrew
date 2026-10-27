@@ -1,0 +1,14 @@
+{
+  "database": "intake.sqlite",
+  "catalog": [],
+  "plex_auth_url": "https://plex.tv/",
+  "plex_server_url": "https://plex.example.invalid/",
+  "plex_server_id": "replace-with-server-resource-id",
+  "client_id": "pitcrew-bot",
+  "discord": {
+    "channel_id": "discord-primary",
+    "bot_token": "replace-with-application-bot-token"
+  },
+  "telegram": null,
+  "seerr": null
+}

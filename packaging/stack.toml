@@ -1,0 +1,64 @@
+# One configuration for control, viewer launcher, bot and agent.
+# Replace synthetic integrations and supply private secret files before use.
+version = 1
+database = "/var/lib/pitcrew/engine.sqlite"
+
+[engine]
+mode = "shadow"
+listen = "127.0.0.1:7400"
+control_secret = { file = "/etc/pitcrew/secrets/control" }
+admin_secret = { file = "/etc/pitcrew/secrets/admin" }
+poll_enabled = false
+poll_seconds = 30
+
+[stack]
+enabled = true
+intake_database = "/var/lib/pitcrew/intake.sqlite"
+evidence_max_age_seconds = 300
+web_listen = "127.0.0.1:7401"
+web_public_origin = "http://127.0.0.1:7401"
+plex_auth_url = "https://plex.tv/"
+plex_client_id = "pitcrew"
+# catalog = [] # Optional initial CatalogItem metadata; never access grants.
+# bot_seerr_user_id = 1 # Required only with a Seerr channel.
+
+[plex]
+url = "http://127.0.0.1:32400"
+owner_token = { file = "/etc/pitcrew/secrets/plex" }
+server_id = "replace-with-your-server-identifier"
+
+[[arr]]
+id = "tv"
+kind = "sonarr"
+url = "http://127.0.0.1:8989"
+api_key = { file = "/etc/pitcrew/secrets/sonarr" }
+webhook_secret = { file = "/etc/pitcrew/secrets/tv-webhook" }
+libraries = ["replace-with-your-library-id"]
+
+[agent]
+url = "http://127.0.0.1:8790"
+shared_secret = { file = "/etc/pitcrew/secrets/agent" }
+media_roots = ["/media"]
+storage_roots = ["/storage"]
+plex_log_timezone = "UTC"
+decode_concurrency = 2
+
+[agent.server]
+listen = "127.0.0.1:8790"
+compatibility = false
+decode_seconds = 10
+decode_offsets_percent = [0, 40, 80]
+decode_timeout_seconds = 180
+
+[budgets]
+global_hour = 12
+global_day = 40
+viewer_hour = 3
+viewer_day = 10
+per_job = 2
+item_cooldown_seconds = 21600
+
+# Starting the optional bot connects to configured platforms.
+# [[channels]]
+# id = "discord"
+# adapter = { kind = "discord", token = { file = "/etc/pitcrew/secrets/discord" }, control_plane_url = "http://127.0.0.1:7400", control_plane_secret = { file = "/etc/pitcrew/secrets/control" } }

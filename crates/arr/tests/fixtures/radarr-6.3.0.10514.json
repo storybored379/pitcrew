@@ -1,0 +1,8 @@
+{
+  "status": {"appName":"Radarr","version":"6.3.0.10514","databaseType":"SQLite","databaseVersion":"3.50.4","urlBase":""},
+  "item": {"id":101,"title":"Invented Feature","movieFileId":301,"hasFile":true,"monitored":true,"movieFile":{"id":301,"movieId":101}},
+  "file": {"id":301,"movieId":101,"relativePath":"Invented.Feature.mkv","path":"/library/invented/Invented.Feature.mkv","size":2147483648,"dateAdded":"2026-01-02T03:04:05Z","quality":{"quality":{"id":7,"name":"Bluray-1080p","source":"bluray","resolution":1080},"revision":{"version":2,"real":0,"isRepack":true}},"mediaInfo":{"videoCodec":"h264","audioCodec":"aac"}},
+  "queue": {"page":1,"pageSize":100,"totalRecords":1,"records":[{"id":601,"movieId":101,"movie":{"id":101},"size":2147483648,"sizeleft":0,"title":"Invented.Feature.SYNTHETIC","status":"completed","trackedDownloadStatus":"warning","trackedDownloadState":"importPending","statusMessages":[],"downloadId":"synthetic-download-a","protocol":"usenet","downloadClient":"synthetic-client","downloadClientHasPostImportCategory":false,"outputPath":"/downloads/Invented.Feature","timeleft":"00:00:00"}]},
+  "history": {"page":1,"pageSize":100,"totalRecords":1,"records":[{"id":401,"movieId":101,"sourceTitle":"Invented.Feature.SYNTHETIC","date":"2026-01-02T03:04:05Z","downloadId":"synthetic-download-a","eventType":"grabbed","data":{"indexer":"synthetic-indexer","downloadClient":"SABnzbd","downloadClientName":"synthetic-client","size":"2147483648","guid":"synthetic-guid-a","indexerId":"701","protocol":"1"}}]},
+  "blocklist": {"page":1,"pageSize":100,"totalRecords":1,"records":[{"id":501,"movieId":102,"sourceTitle":"Other.Invented.Feature.SYNTHETIC","date":"2026-01-02T03:05:05Z","protocol":"usenet","message":"synthetic rejection"}]}
+}

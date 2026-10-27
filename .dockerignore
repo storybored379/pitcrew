@@ -1,0 +1,14 @@
+.git
+.agents
+.privacy-denylist
+runtime
+target
+mutants.out*
+.env
+*.sqlite*
+*.db
+packaging/secrets
+packaging/state
+packaging/media
+packaging/storage
+packaging/stack.toml
