@@ -4,7 +4,7 @@ pub mod diagnoses;
 pub mod progress;
 pub mod routes;
 
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use sqlx::{
@@ -269,7 +269,7 @@ impl Store {
     fn link_digest(&self, code: &str) -> Result<String> {
         let mut mac = Hmac::<Sha256>::new_from_slice(&self.link_key).map_err(|_| Error::Invalid)?;
         mac.update(code.trim().to_ascii_lowercase().as_bytes());
-        Ok(format!("{:x}", mac.finalize().into_bytes()))
+        Ok(hex::encode(mac.finalize().into_bytes()))
     }
     pub async fn linked_account(&self, channel: &str, user: &str) -> Result<Option<String>> {
         Ok(
@@ -436,7 +436,7 @@ fn expiry(now: u64, ttl: u64) -> Result<i64> {
     integer(now.checked_add(ttl).ok_or(Error::Invalid)?)
 }
 fn digest(raw: &str) -> String {
-    format!("{:x}", Sha256::digest(raw.as_bytes()))
+    hex::encode(Sha256::digest(raw.as_bytes()))
 }
 fn random(bytes: usize) -> Result<String> {
     let mut value = vec![0; bytes];
@@ -490,4 +490,25 @@ fn load_key(database: &Path) -> Result<[u8; 32]> {
         .read_to_end(&mut bytes)
         .map_err(|_| Error::Invalid)?;
     bytes.try_into().map_err(|_| Error::Invalid)
+}
+
+#[cfg(test)]
+mod digest_tests {
+    use super::*;
+
+    // Stored keys and link digests must survive crypto crate upgrades unchanged.
+    #[test]
+    fn digests_match_published_vectors() {
+        assert_eq!(
+            digest("abc"),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+        // RFC 4231 test case 2.
+        let mut mac = Hmac::<Sha256>::new_from_slice(b"Jefe").unwrap();
+        mac.update(b"what do ya want for nothing?");
+        assert_eq!(
+            hex::encode(mac.finalize().into_bytes()),
+            "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843"
+        );
+    }
 }

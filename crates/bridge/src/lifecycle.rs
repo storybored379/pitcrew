@@ -165,8 +165,12 @@ impl Bridge {
         now: u64,
     ) -> Result<bool> {
         let key = format!(
-            "lifecycle:{:x}",
-            Sha256::digest(serde_json::to_vec(&(command, purpose, &route.recipient))?)
+            "lifecycle:{}",
+            hex::encode(Sha256::digest(serde_json::to_vec(&(
+                command,
+                purpose,
+                &route.recipient
+            ))?))
         );
         let payload = ViewerNotification {
             recipient: route.recipient,

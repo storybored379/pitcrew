@@ -230,18 +230,15 @@ pub async fn journal_message(
 /// Transport ids may be scoped to a conversation (Telegram message ids), so all
 /// authenticated routing identity participates. Message text never changes a key.
 pub fn message_key(incoming: &IncomingMessage) -> String {
-    format!(
-        "{:x}",
-        Sha256::digest(
-            serde_json::to_vec(&(
-                &incoming.sender.channel_id,
-                &incoming.sender.platform_user_id,
-                &incoming.conversation_id,
-                &incoming.message_id
-            ))
-            .expect("string tuple serialization")
-        )
-    )
+    hex::encode(Sha256::digest(
+        serde_json::to_vec(&(
+            &incoming.sender.channel_id,
+            &incoming.sender.platform_user_id,
+            &incoming.conversation_id,
+            &incoming.message_id,
+        ))
+        .expect("string tuple serialization"),
+    ))
 }
 fn visible(
     response: &serde_json::Value,

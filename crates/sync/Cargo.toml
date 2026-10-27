@@ -13,7 +13,7 @@ pitcrew-upstream = { path = "../upstream" }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
-roxmltree = "0.21"
+roxmltree = "0.21.2"
 
 [dev-dependencies]
 pitcrew-intake-store = { path = "../intake-store" }

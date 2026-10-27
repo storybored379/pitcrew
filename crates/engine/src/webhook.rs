@@ -105,7 +105,7 @@ impl Intake {
         // serde_json's default sorted object keys make whitespace/key order
         // irrelevant; event bodies without stable IDs get lifetime replay dedup.
         let canonical = serde_json::to_vec(&raw).map_err(|_| IntakeError::Payload)?;
-        let key = format!("{:x}", Sha256::digest(&canonical));
+        let key = hex::encode(Sha256::digest(&canonical));
         Ok(self
             .store
             .ingest_observation(

@@ -672,7 +672,7 @@ fn request_key(d: &Diagnosis, c: &Constraints, registered: FileIdentity) -> Resu
         registered,
         c,
     ))?;
-    Ok(format!("bridge:{:x}", Sha256::digest(bytes)))
+    Ok(format!("bridge:{}", hex::encode(Sha256::digest(bytes))))
 }
 fn job_id(key: &str) -> u64 {
     let digest = Sha256::digest(key.as_bytes());

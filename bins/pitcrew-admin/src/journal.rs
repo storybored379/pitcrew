@@ -25,7 +25,7 @@ pub fn token() -> Result<String> {
     Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
 }
 fn digest(value: &str) -> String {
-    format!("{:x}", Sha256::digest(value.as_bytes()))
+    hex::encode(Sha256::digest(value.as_bytes()))
 }
 pub(crate) fn integer(value: u64) -> Result<i64> {
     value.try_into().map_err(|_| Error::Input)
@@ -118,5 +118,17 @@ impl Journal {
             .execute(&self.pool)
             .await?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod digest_tests {
+    // Stored digests must survive crypto crate upgrades unchanged.
+    #[test]
+    fn digest_matches_the_published_vector() {
+        assert_eq!(
+            super::digest("abc"),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
     }
 }

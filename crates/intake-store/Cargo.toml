@@ -14,8 +14,9 @@ serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite"] }
-sha2 = "0.10"
-hmac = "0.12"
+sha2 = "0.11"
+hex = "0.4"
+hmac = "0.13"
 getrandom = "0.4"
 
 [dev-dependencies]

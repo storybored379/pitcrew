@@ -20,7 +20,8 @@ reqwest = { version = "0.13", default-features = false, features = ["rustls", "j
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite"] }
 url = "2"
 getrandom = "0.4"
-sha2 = "0.10"
+sha2 = "0.11"
+hex = "0.4"
 subtle = "2"
 tokio = { version = "1", features = ["full"] }
 
