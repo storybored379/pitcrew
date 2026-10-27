@@ -107,9 +107,14 @@ impl<T: Transport> Runtime<T> {
             .resolve("plex.owner_token")
             .map_err(|_| "plex.owner_token unavailable")?;
         let transport = Shared(Arc::new(transport));
+        // Whole-library reads outgrow the 4 MiB default: Radarr `/movie` is ~1.5 KB a title,
+        // so 7,500 films is ~11 MB. Every catalog request is still bounded.
+        let limits = Limits {
+            timeout: std::time::Duration::from_secs(30),
+            max_response_bytes: 64 * 1024 * 1024,
+        };
         let endpoint = |url: &str, auth| {
-            Endpoint::new(url, auth, Limits::default())
-                .map_err(|_| "runtime upstream endpoint invalid")
+            Endpoint::new(url, auth, limits).map_err(|_| "runtime upstream endpoint invalid")
         };
         let plex_reader = Reader::new(
             endpoint(

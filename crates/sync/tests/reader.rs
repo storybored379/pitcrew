@@ -61,7 +61,7 @@ fn pq(offset: &'static str, kind: &'static str) -> Vec<(&'static str, &'static s
         ("type", kind),
         ("X-Plex-Container-Start", offset),
         ("X-Plex-Container-Size", "2"),
-        ("sort", "ratingKey:asc"),
+        ("sort", "id:asc"),
     ]
 }
 fn raw_item() -> Value {

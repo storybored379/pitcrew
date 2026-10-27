@@ -160,7 +160,8 @@ impl<T: Transport> Reader<T> {
             ("type".into(), if episodes { "4" } else { "1" }.into()),
             ("X-Plex-Container-Start".into(), cursor.offset.to_string()),
             ("X-Plex-Container-Size".into(), size.to_string()),
-            ("sort".into(), "ratingKey:asc".into()),
+            // Plex answers 500 to `sort=ratingKey`; `id` is the same key and is accepted.
+            ("sort".into(), "id:asc".into()),
         ];
         if let Some(since) = cursor.updated_since {
             query.push(("updatedAt>=".into(), since.to_string()));

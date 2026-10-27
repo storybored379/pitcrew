@@ -59,7 +59,11 @@ async fn run_runtime(healthy: bool) {
                 _ => panic!("unexpected runtime request {route}"),
             };
             requests.lock().unwrap().push(path.to_owned());
-            let bytes = serde_json::to_vec(&body).unwrap();
+            let mut bytes = serde_json::to_vec(&body).unwrap();
+            if path == "/api/v3/movie" {
+                // A real library's movie list is several MiB; the runtime must accept it.
+                bytes = [b"[".as_slice(), &vec![b' '; 5 << 20], b"]"].concat();
+            }
             let headers = format!(
                 "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
                 bytes.len()
