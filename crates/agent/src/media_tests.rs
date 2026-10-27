@@ -1398,7 +1398,7 @@ async fn decode_maps_real_video_streams_only() {
         .unwrap();
     assert_eq!(d.outcome, ProbeOutcome::Passed);
     let args = fs::read_to_string(args).unwrap();
-    assert!(args.contains("-map 0:V?"), "{args}");
+    assert!(args.contains("-map 0:V:0?"), "{args}");
     assert!(!args.contains("0:v?"), "{args}");
 }
 
@@ -1424,23 +1424,22 @@ async fn real_file_with_cover_art_decodes_quickly() {
             .unwrap()
             .success()
     );
-    let base = fixture(dir.path(), "base.mkv", &[]);
+    // Three seconds, so every 1 s sample lies inside the streams on any ffmpeg:
+    // since 7.x a half-second clip reports a container duration past its content.
+    let base = fixture(dir.path(), "base.mkv", &["-t", "3"]);
     let path = dir.path().join("covered.mkv");
+    // Real Matroska cover art is an attachment, exposed as an attached picture.
     assert!(
         std::process::Command::new("ffmpeg")
             .args(["-v", "error", "-nostdin", "-i"])
             .arg(&base)
-            .arg("-i")
+            .args(["-map", "0", "-c", "copy", "-attach"])
             .arg(&cover)
             .args([
-                "-map",
-                "0",
-                "-map",
-                "1",
-                "-c",
-                "copy",
-                "-disposition:v:1",
-                "attached_pic"
+                "-metadata:s:t",
+                "mimetype=image/jpeg",
+                "-metadata:s:t",
+                "filename=cover.jpg"
             ])
             .arg(&path)
             .status()

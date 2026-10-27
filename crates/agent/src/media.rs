@@ -419,8 +419,10 @@ impl MediaAgent {
                 "-nostats",
                 "-map",
                 // Capital V excludes attached pictures (cover art), which made
-                // healthy samples crawl and fail.
-                "0:V?",
+                // healthy samples crawl and fail. Only the first such stream: a
+                // still stored as an ordinary video track ends at once, and
+                // ffmpeg 8 then reports the sample's decoded time as N/A.
+                "0:V:0?",
                 "-map",
                 "0:a?",
                 "-threads",
