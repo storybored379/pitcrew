@@ -186,7 +186,9 @@ observation journal. Saved health describes the runtime's own bounded operations
 the admin UI performs no probes. Rules remain the runtime decider. Optional cloud
 and local model scheduling, optional playback telemetry enrichment, and autonomous
 live effect orchestration remain separate integration work. A configured admin
-consumer requires the private admin journal to exist (start the owner UI first).
+consumer reads the private admin journal that the owner UI creates. Services can
+start in any order: until the journal exists, the controller logs
+`admin_journal_waiting` each tick and connects once it appears.
 Owner commands are consumed after report evidence refresh and before new bridge
 jobs are created. Unsupported lower-quality execution is audited as deferred.
 

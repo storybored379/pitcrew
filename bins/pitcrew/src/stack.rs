@@ -135,6 +135,10 @@ pub async fn web(config: &Config, check: bool) -> Result<(), &'static str> {
         .map_err(|_| "web listener failed")
 }
 
+/// The owner UI creates the journal, and it needs the controller's databases
+/// to start, so on a fresh install the controller keeps retrying this one.
+pub const JOURNAL_UNAVAILABLE: &str = "admin command journal unavailable; waiting for the owner UI";
+
 /// Connect the owner command journal to the same engine/intake pair used by the
 /// controller. Numerical report/job IDs alone do not identify an installation.
 pub async fn admin_consumer(
@@ -169,5 +173,5 @@ pub async fn admin_consumer(
     )
     .await
     .map(Some)
-    .map_err(|_| "admin command journal unavailable; start the owner UI first")
+    .map_err(|_| JOURNAL_UNAVAILABLE)
 }

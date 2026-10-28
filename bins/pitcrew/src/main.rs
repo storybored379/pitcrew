@@ -265,7 +265,21 @@ async fn run() -> Result<(), String> {
         }),
     )
     .await?;
-    let consumer = pitcrew::stack::admin_consumer(&config, bridge.as_ref()).await?;
+    // A fresh install: the owner UI has not created its journal yet. Any other
+    // journal or source problem still stops startup.
+    let mut journal_pending = false;
+    let mut consumer = match pitcrew::stack::admin_consumer(&config, bridge.as_ref()).await {
+        Err(pitcrew::stack::JOURNAL_UNAVAILABLE)
+            if config
+                .admin
+                .as_ref()
+                .is_some_and(|admin| !admin.database.exists()) =>
+        {
+            journal_pending = true;
+            None
+        }
+        opened => opened?,
+    };
     let mut clients = vec![];
     if config.engine.poll_enabled {
         for arr in &config.arr {
@@ -312,6 +326,16 @@ async fn run() -> Result<(), String> {
             let mut last_sync = None;
             loop {
                 timer.tick().await;
+                if journal_pending {
+                    match pitcrew::stack::admin_consumer(&config, bridge.as_ref()).await {
+                        Ok(opened) => {
+                            consumer = opened;
+                            journal_pending = false;
+                            eprintln!("{}", json!({"event":"admin_journal_connected"}));
+                        }
+                        Err(_) => eprintln!("{}", json!({"event":"admin_journal_waiting"})),
+                    }
+                }
                 if let Some(runtime) = &mut runtime {
                     if last_sync.is_none_or(|at: u64| {
                         now().saturating_sub(at) >= config.runtime.sync_seconds
@@ -410,7 +434,9 @@ fn private_file(path: &Path) -> std::io::Result<std::fs::File> {
 }
 
 /// Bounded overlapping reads: stable history IDs deduplicate across polling and
-/// restarts. Hitting the page cap reports incomplete; absence never means failed.
+/// restarts. History is newest first, so a page holding a row an earlier poll
+/// stored closes the gap since that poll. Hitting the page cap without reaching
+/// such a row or the end reports incomplete; absence never means failed.
 async fn poll<T: pitcrew_upstream::Transport>(
     app: &App,
     id: &str,
@@ -427,6 +453,7 @@ async fn poll<T: pitcrew_upstream::Transport>(
         if history.records.len() > 100 {
             return Err("history page exceeds requested bound".into());
         }
+        let mut overlap = false;
         for row in history.records {
             let event = match row.event_type.as_str() {
                 "grabbed" => EventKind::Grab,
@@ -442,7 +469,8 @@ async fn poll<T: pitcrew_upstream::Transport>(
                 media: row.episode_id.or(row.movie_id).into_iter().collect(),
                 files: vec![],
             };
-            app.store
+            let fresh = app
+                .store
                 .ingest_observation(
                     &format!("history:{id}"),
                     &row.id.to_string(),
@@ -451,8 +479,9 @@ async fn poll<T: pitcrew_upstream::Transport>(
                 )
                 .await
                 .map_err(|_| "store")?;
+            overlap |= !fresh;
         }
-        if u64::from(number) * 100 >= history.total_records {
+        if overlap || u64::from(number) * 100 >= history.total_records {
             complete = true;
             break;
         }

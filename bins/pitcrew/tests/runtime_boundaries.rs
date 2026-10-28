@@ -520,3 +520,109 @@ libraries=["movies"]
     child.wait().await.unwrap();
     fake.await.unwrap();
 }
+
+fn admin_stack_config(dir: &std::path::Path) -> (std::path::PathBuf, std::path::PathBuf) {
+    let (engine, intake, journal) = (
+        dir.join("engine.sqlite"),
+        dir.join("intake.sqlite"),
+        dir.join("admin.sqlite"),
+    );
+    let config = dir.join("config.toml");
+    std::fs::write(
+        &config,
+        format!(
+            r#"version=1
+database={engine:?}
+[engine]
+listen="127.0.0.1:0"
+poll_seconds=1
+[stack]
+enabled=true
+intake_database={intake:?}
+[admin]
+database={journal:?}
+engine_database={engine:?}
+intake_database={intake:?}
+bind="127.0.0.1:0"
+public_origin="https://owner.invalid"
+plex_auth_url="https://auth.invalid"
+client_id="synthetic"
+admin_account_ids=["1001"]
+"#
+        ),
+    )
+    .unwrap();
+    (config, journal)
+}
+
+#[tokio::test]
+async fn existing_foreign_journal_still_stops_startup() {
+    let dir = tempfile::tempdir().unwrap();
+    let (config, journal) = admin_stack_config(dir.path());
+    std::fs::write(&journal, b"").unwrap();
+    let output = tokio::time::timeout(
+        std::time::Duration::from_secs(15),
+        tokio::process::Command::new(env!("CARGO_BIN_EXE_pitcrew"))
+            .arg("--config")
+            .arg(config)
+            .kill_on_drop(true)
+            .output(),
+    )
+    .await
+    .expect("the controller kept running with a foreign journal")
+    .unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("admin command journal unavailable"));
+}
+
+#[tokio::test]
+async fn fresh_install_waits_for_the_owner_ui_journal_instead_of_exiting() {
+    use tokio::io::AsyncBufReadExt;
+    let dir = tempfile::tempdir().unwrap();
+    let (config, journal) = admin_stack_config(dir.path());
+    let mut child = tokio::process::Command::new(env!("CARGO_BIN_EXE_pitcrew"))
+        .arg("--config")
+        .arg(config)
+        .stderr(std::process::Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    let mut lines = tokio::io::BufReader::new(child.stderr.take().unwrap()).lines();
+    let mut next = async || {
+        let line = tokio::time::timeout(std::time::Duration::from_secs(15), lines.next_line())
+            .await
+            .unwrap()
+            .unwrap()
+            .expect("controller exited");
+        serde_json::from_str::<Value>(&line).unwrap()["event"].clone()
+    };
+    assert_eq!(next().await, "pitcrew_started");
+    assert_eq!(next().await, "admin_journal_waiting");
+    assert!(
+        !journal.exists(),
+        "the controller must not create the journal"
+    );
+    // What the owner UI does on its first start.
+    let pool = sqlx::SqlitePool::connect_with(
+        sqlx::sqlite::SqliteConnectOptions::new()
+            .filename(&journal)
+            .create_if_missing(true),
+    )
+    .await
+    .unwrap();
+    sqlx::raw_sql(include_str!("../../pitcrew-admin/src/schema.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    loop {
+        match next().await.as_str().unwrap() {
+            "admin_journal_waiting" | "bridge_tick" => continue,
+            event => {
+                assert_eq!(event, "admin_journal_connected");
+                break;
+            }
+        }
+    }
+    assert!(child.try_wait().unwrap().is_none());
+    child.kill().await.unwrap();
+}

@@ -31,7 +31,12 @@ async fn run(
     script: Vec<(&'static str, serde_json::Value)>,
 ) -> (tempfile::TempDir, App, Result<(), String>) {
     let dir = tempfile::tempdir().unwrap();
-    let app = App::new(
+    let app = app(&dir).await;
+    let outcome = poll_with(&app, script).await;
+    (dir, app, outcome)
+}
+async fn app(dir: &tempfile::TempDir) -> App {
+    App::new(
         Store::open(dir.path().join("db")).await.unwrap(),
         vec![],
         None,
@@ -44,7 +49,12 @@ async fn run(
         2,
         BTreeMap::new(),
     )
-    .unwrap();
+    .unwrap()
+}
+async fn poll_with(
+    app: &App,
+    script: Vec<(&'static str, serde_json::Value)>,
+) -> Result<(), String> {
     let client = Client::new(
         Endpoint::new(
             "http://fake.invalid",
@@ -55,8 +65,7 @@ async fn run(
         Script(Mutex::new(script.into())),
         Kind::Sonarr,
     );
-    let outcome = poll(&app, "series", Kind::Sonarr, &client, 1234).await;
-    (dir, app, outcome)
+    poll(app, "series", Kind::Sonarr, &client, 1234).await
 }
 #[tokio::test]
 async fn all_history_events_keep_exact_kind_and_timestamp() {
@@ -164,4 +173,44 @@ async fn queue_page_limits_and_manual_import_request_budget_are_independent() {
     ])
     .await;
     outcome.unwrap();
+}
+#[tokio::test]
+async fn history_stops_complete_at_rows_an_earlier_poll_stored() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = app(&dir).await;
+    // Only fresh rows: the second page is still read.
+    poll_with(
+        &app,
+        vec![
+            (
+                "/api/v3/history",
+                page(200, vec![history(2, "grabbed"), history(1, "grabbed")]),
+            ),
+            ("/api/v3/history", page(200, vec![])),
+            ("/api/v3/queue", page(0, vec![])),
+        ],
+    )
+    .await
+    .unwrap();
+    // A long history overlapping the last poll is complete without paging on.
+    poll_with(
+        &app,
+        vec![
+            (
+                "/api/v3/history",
+                page(
+                    555_738,
+                    vec![
+                        history(3, "grabbed"),
+                        history(2, "grabbed"),
+                        history(1, "grabbed"),
+                    ],
+                ),
+            ),
+            ("/api/v3/queue", page(0, vec![])),
+        ],
+    )
+    .await
+    .unwrap();
+    assert_eq!(app.store.observations().await.unwrap().len(), 3);
 }
