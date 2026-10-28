@@ -399,9 +399,10 @@ impl MediaAgent {
         if decode {
             command.args([
                 "-nostdin",
+                // Stop at real decoder errors only. `-err_detect explode` also
+                // aborted on harmless noise right after a seek (missing
+                // pre-seek reference frames, truncated SEI) in healthy remuxes.
                 "-xerror",
-                "-err_detect",
-                "explode",
                 "-threads",
                 "1",
                 "-ss",
@@ -795,13 +796,14 @@ async fn capture(reader: impl AsyncRead + Unpin) -> io::Result<Vec<u8>> {
 
 // Both tools run at loglevel=error: the first stderr byte is decisive.
 // Never retain tool diagnostics, which can contain local paths and metadata.
-async fn reject_stderr(mut reader: impl AsyncRead + Unpin) -> io::Result<()> {
-    let mut first = [0];
-    if reader.read(&mut first).await? == 0 {
-        Ok(())
-    } else {
-        Err(io::Error::other("media tool reported an error"))
-    }
+/// Diagnostics are discarded, never a verdict: healthy files routinely log
+/// warnings (cover-art quirks, muxer timestamps after a seek) and exit 0, while
+/// real decode errors exit nonzero under `-xerror`. Draining keeps a chatty tool
+/// from blocking on a full pipe; the deadline still bounds it.
+async fn drain_stderr(mut reader: impl AsyncRead + Unpin) -> io::Result<()> {
+    let mut buffer = [0; 8192];
+    while reader.read(&mut buffer).await? != 0 {}
+    Ok(())
 }
 
 async fn run_process(
@@ -835,7 +837,7 @@ async fn run_process(
         let stderr = child.stderr.take().expect("piped stderr");
         let result = tokio::select! {
             result = tokio::time::timeout(deadline, async {
-                let (stdout, ()) = tokio::try_join!(capture(stdout), reject_stderr(stderr))?;
+                let (stdout, ()) = tokio::try_join!(capture(stdout), drain_stderr(stderr))?;
                 let status = child.wait().await?;
                 Ok::<_, io::Error>((status, stdout))
             }) => result,

@@ -4,7 +4,9 @@ use crate::{
     media::{MediaAgent, MediaError},
     plex_logs::{PlexLogReader, PlexLogSnapshot},
 };
-use pitcrew_domain::media::{MediaEvidence, ProbeOutcome, StreamFacts, SymlinkResolution};
+use pitcrew_domain::media::{
+    MediaEvidence, MediaFault, ProbeOutcome, StreamFacts, SymlinkResolution,
+};
 use serde_json::{Value, json};
 use std::{
     path::Path,
@@ -116,8 +118,11 @@ pub fn probe_response(e: &MediaEvidence) -> Value {
     json!({"opened":opened,"video_streams":video,"duration_s":e.header.as_ref().and_then(|h|h.duration_ms).unwrap_or(0) as f64/1000.0,"evidence":e})
 }
 pub fn decode_response(e: &MediaEvidence) -> Value {
-    let faults = e.header.as_ref().is_some_and(|h| !h.faults.is_empty())
-        || e.decode.as_ref().is_some_and(|d| !d.faults.is_empty());
+    // Slow storage stays in the evidence for buffering reports; it says nothing
+    // about whether the file itself is damaged.
+    let defect = |faults: &[MediaFault]| faults.iter().any(|f| *f != MediaFault::SlowRead);
+    let faults = e.header.as_ref().is_some_and(|h| defect(&h.faults))
+        || e.decode.as_ref().is_some_and(|d| defect(&d.faults));
     // A hard read error (not a timeout) on a mount that answered is evidence
     // against the file itself, e.g. missing source data behind a symlink.
     let read_failed = e

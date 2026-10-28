@@ -109,12 +109,38 @@ fn decode_requires_known_identity_header_duration_and_actual_tested_range() {
                 .unwrap()
                 .faults
                 .push(MediaFault::NoDuration),
-            1 => e.decode.as_mut().unwrap().faults.push(MediaFault::SlowRead),
+            1 => e
+                .decode
+                .as_mut()
+                .unwrap()
+                .faults
+                .push(MediaFault::DecodeError),
             2 => e.header.as_mut().unwrap().outcome = ProbeOutcome::Failed,
             _ => e.decode.as_mut().unwrap().outcome = ProbeOutcome::Failed,
         };
         assert_eq!(decode_response(&e)["verdict"], "bad");
     }
+}
+// Shadow 2026-10-27: cold reads on streaming storage often take over a second
+// to the first byte, which marked healthy, fully decodable files "bad". Slow
+// storage is evidence for a buffering report, not a defect in the file.
+#[test]
+fn slow_reads_stay_evidence_but_never_make_a_file_bad() {
+    for slow in 0..3 {
+        let mut e = evidence();
+        if slow != 1 {
+            e.header.as_mut().unwrap().faults.push(MediaFault::SlowRead);
+        }
+        if slow != 0 {
+            e.decode.as_mut().unwrap().faults.push(MediaFault::SlowRead);
+        }
+        let response = decode_response(&e);
+        assert_eq!(response["verdict"], "ok", "case {slow}");
+        assert!(response["evidence"].to_string().contains("SlowRead"));
+    }
+    let mut e = evidence();
+    e.header.as_mut().unwrap().faults = vec![MediaFault::SlowRead, MediaFault::NoDuration];
+    assert_eq!(decode_response(&e)["verdict"], "bad");
 }
 // Shadow 2026-10-23: a file whose first read failed with an I/O error on a
 // healthy mount was reported "unknown"; the old service correctly said "bad".

@@ -755,7 +755,7 @@ async fn bounded_output_and_decisive_process_errors() {
     let file = Arc::new(File::open(path).unwrap());
     for (index, body) in [
         "echo out_time_us=0",
-        "echo out_time_us=1000000; echo error >&2",
+        "echo error >&2; exit 1",
         "echo out_time_us=1000000; exit 1",
     ]
     .into_iter()
@@ -832,27 +832,65 @@ fn symlinks_with_dot_and_parent_components_resolve_like_the_kernel() {
 }
 
 #[tokio::test]
-async fn first_decisive_stderr_exits_before_the_process_deadline() {
+async fn stderr_diagnostics_never_decide_a_verdict() {
+    // Real remuxes: ffprobe warns about cover art and ffmpeg's null muxer about
+    // timestamps after a seek, both exiting 0 with complete output. Real decode
+    // errors exit nonzero (-xerror), so the exit status and progress decide.
     let dir = TempDir::new().unwrap();
     let path = dir.path().join("file");
     fs::write(&path, b"data").unwrap();
+    let file = Arc::new(File::open(&path).unwrap());
     let mut c = config(dir.path());
     c.ffprobe = script(
         dir.path(),
-        "error_then_hang",
-        "echo error >&2; exec sleep 30",
+        "noisy_probe",
+        r#"echo '[mjpeg @ 0x1] bits 126 is invalid' >&2; printf '%s' '{"format":{"duration":"1"},"streams":[{"codec_type":"video","codec_name":"h264"},{"codec_type":"audio","codec_name":"dts","channels":6}]}'"#,
     );
-    let start = Instant::now();
-    let evidence = MediaAgent::new(c)
-        .unwrap()
-        .inspect(&path, true)
+    // More stderr than a pipe buffer holds must not stall the tool.
+    c.ffmpeg = script(
+        dir.path(),
+        "noisy_decoder",
+        "head -c 300000 /dev/zero | tr '\\0' 'x' >&2; echo out_time_us=1000000",
+    );
+    let agent = MediaAgent::new(c).unwrap();
+    let header = agent.probe(Arc::clone(&file), None).await.unwrap();
+    assert_eq!(header.outcome, ProbeOutcome::Passed);
+    assert!(header.faults.is_empty(), "{:?}", header.faults);
+    let decode = agent
+        .probe(file, Some((5000, Duration::from_secs(4))))
         .await
         .unwrap();
-    assert!(start.elapsed() < Duration::from_secs(1));
-    assert_eq!(evidence.header.unwrap().outcome, ProbeOutcome::Failed);
-    assert!(evidence.decode.is_none());
-    assert!(reject_stderr(&b""[..]).await.is_ok());
-    assert!(reject_stderr(&b"x"[..]).await.is_err());
+    assert_eq!(decode.outcome, ProbeOutcome::Passed);
+    assert_eq!(
+        decode.tested_ranges,
+        vec![DecodeRange {
+            start_ms: 5000,
+            end_ms: Some(6000)
+        }]
+    );
+}
+
+#[tokio::test]
+async fn failing_tool_is_failed_and_a_hung_one_times_out() {
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("file");
+    fs::write(&path, b"data").unwrap();
+    let file = Arc::new(File::open(&path).unwrap());
+    let mut c = config(dir.path());
+    c.header_timeout = Duration::from_millis(500);
+    c.ffprobe = script(dir.path(), "failing_probe", "echo error >&2; exit 1");
+    let failed = MediaAgent::new(c.clone())
+        .unwrap()
+        .probe(Arc::clone(&file), None)
+        .await
+        .unwrap();
+    assert_eq!(failed.outcome, ProbeOutcome::Failed);
+    assert_eq!(failed.faults, vec![MediaFault::InvalidHeader]);
+    c.ffprobe = script(dir.path(), "hung_probe", "echo error >&2; exec sleep 30");
+    let start = Instant::now();
+    let hung = MediaAgent::new(c).unwrap().probe(file, None).await.unwrap();
+    assert!(start.elapsed() < Duration::from_secs(2));
+    assert_eq!(hung.outcome, ProbeOutcome::TimedOut);
 }
 
 #[test]
@@ -1399,6 +1437,9 @@ async fn decode_maps_real_video_streams_only() {
     assert_eq!(d.outcome, ProbeOutcome::Passed);
     let args = fs::read_to_string(args).unwrap();
     assert!(args.contains("-map 0:V:0?"), "{args}");
+    // Real decoder errors stop the sample; post-seek noise must not.
+    assert!(args.contains("-xerror"), "{args}");
+    assert!(!args.contains("explode"), "{args}");
     assert!(!args.contains("0:v?"), "{args}");
 }
 
