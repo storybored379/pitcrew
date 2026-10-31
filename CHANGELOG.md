@@ -12,6 +12,12 @@ imply that a release, package, or container image has been published.
 - Viewer web, Discord bot, and owner desk surfaces with synthetic offline tests.
 - Setup command, Docker Compose and systemd packaging, and configuration and
   certification guides for starting in shadow mode.
+- Separate slim control/web/admin/bot image and FFmpeg agent image, with digest-pinned
+  bases, fixed Debian package snapshots and an isolated Compose smoke check in CI.
+- Opt-in model scheduling by diagnosis kind with bounded requests, saved usage,
+  rules fallback and a rules-owned set of permitted recommendations.
+- Default-off agent timeout confirmation: repeated failures on the same byte range
+  require prompt uncached control reads before the local verdict can be `bad`.
 - Public scenario fixtures, a repository privacy gate, push/PR checks, scheduled
   mutation gates, contribution templates, and private security-reporting guidance.
 

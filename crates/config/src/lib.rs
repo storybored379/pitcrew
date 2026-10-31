@@ -15,6 +15,7 @@ pub use stack::{Stack, StackCatalogItem, StackResolution};
 pub mod admin;
 pub mod live;
 pub mod lower_quality;
+pub mod models;
 pub mod runtime;
 
 #[derive(Debug, Deserialize)]
@@ -30,6 +31,8 @@ pub struct Config {
     pub live: live::Live,
     #[serde(default)]
     pub lower_quality: lower_quality::LowerQuality,
+    #[serde(default)]
+    pub models: models::Models,
     #[serde(default)]
     pub engine: Engine,
     #[serde(default = "default_database")]
@@ -232,7 +235,7 @@ pub struct Providers {
     pub reply_writer_profile: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct OpenAiCompatibleProvider {
     /// Unique profile name used in comparisons and by `decider_profile`.
@@ -299,7 +302,7 @@ impl OpenAiCompatibleProvider {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CloudProvider {
     pub api_key: SecretRef,
@@ -356,7 +359,7 @@ impl Default for Budgets {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SecretRef {
     pub env: Option<String>,
@@ -461,6 +464,7 @@ impl Config {
     pub fn validate(&self) -> Result<(), ConfigError> {
         self.stack.validate()?;
         self.runtime.validate()?;
+        self.models.validate(&self.providers)?;
         integrations::validate(self)?;
         if !self.engine.listen.ip().is_loopback() {
             return Err(invalid(

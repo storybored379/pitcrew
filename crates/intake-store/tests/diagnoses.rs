@@ -77,6 +77,7 @@ fn comparison(diagnosis: &Diagnosis) -> Comparison {
             provider: diagnosis.decider_kind,
             result: Some(diagnosis.decision.clone()),
             failed: false,
+            accounting: None,
         }],
     }
 }
@@ -502,4 +503,41 @@ async fn malformed_stored_facts_are_rejected_without_coercing_identity_or_time()
         store.diagnosis(original.report_id).await.unwrap(),
         Some(original)
     );
+}
+
+#[tokio::test]
+async fn model_attempts_survive_reopen_and_never_replay_or_change_accounting() {
+    let (dir, store) = setup().await;
+    let id = report(&store, 1).await;
+    assert_eq!(store.model_attempt(id).await.unwrap(), None);
+    assert!(!store.begin_model_attempt(id, 9).await.unwrap());
+    assert!(!store.begin_model_attempt(id + 1, 10).await.unwrap());
+    assert!(store.begin_model_attempt(id, 10).await.unwrap());
+    assert!(!store.begin_model_attempt(id, 11).await.unwrap());
+    let reopened = Store::open(dir.path().join("journal.sqlite"))
+        .await
+        .unwrap();
+    let pending = reopened.model_attempt(id).await.unwrap().unwrap();
+    assert_eq!(pending.started_at, 10);
+    assert_eq!(pending.comparison, None);
+    assert!(!reopened.begin_model_attempt(id, 12).await.unwrap());
+    let expected = comparison(&diagnosis(id));
+    reopened.finish_model_attempt(id, &expected).await.unwrap();
+    reopened.finish_model_attempt(id, &expected).await.unwrap();
+    assert_eq!(
+        store.model_attempt(id).await.unwrap().unwrap().comparison,
+        Some(serde_json::to_value(&expected).unwrap())
+    );
+    let mut changed = expected.clone();
+    changed.used_rules_fallback = true;
+    assert!(matches!(
+        store.finish_model_attempt(id, &changed).await,
+        Err(Error::Invalid)
+    ));
+    assert!(matches!(
+        store.finish_model_attempt(id + 1, &expected).await,
+        Err(Error::Invalid)
+    ));
+    assert!(store.begin_model_attempt(id, u64::MAX).await.is_err());
+    assert!(store.diagnosis(id).await.unwrap().is_none());
 }

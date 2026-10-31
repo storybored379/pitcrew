@@ -9,6 +9,9 @@ pub fn summarize(records: &[Value], rates: &BTreeMap<String, AdminRates>) -> Res
     let mut grouped: BTreeMap<String, (u64, u64, Usage)> = BTreeMap::new();
     for record in records {
         let provider = record["provider"].as_str().ok_or(Error::Storage)?;
+        if record["accounting"]["requests_started"].as_u64() == Some(0) {
+            continue;
+        }
         let entry = grouped.entry(provider.into()).or_default();
         entry.0 = entry.0.checked_add(1).ok_or(Error::Storage)?;
         if !record["usage"].is_null() {

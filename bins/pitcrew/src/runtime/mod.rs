@@ -59,6 +59,7 @@ pub struct Runtime<T> {
     plex: Reader<Shared<T>>,
     arr: BTreeMap<String, Arr<T>>,
     collectors: Collectors<Shared<T>>,
+    deciders: Arc<pitcrew_deciders::shadow::DecisionRunner>,
     access_url: url::Url,
     owner_url: url::Url,
     token: String,
@@ -103,7 +104,10 @@ impl<T: Transport> Runtime<T> {
         store: Store,
         transport: T,
         clock: Arc<Clock>,
-    ) -> Result<Option<Self>, &'static str> {
+    ) -> Result<Option<Self>, &'static str>
+    where
+        T: 'static,
+    {
         if !config.stack.enabled || config.plex.is_none() || config.arr.is_empty() {
             return Ok(None);
         }
@@ -247,9 +251,13 @@ impl<T: Transport> Runtime<T> {
         )
         .await
         .map_err(|_| "runtime bridge unavailable")?;
+        let deciders = Arc::new(pitcrew_deciders::shadow::DecisionRunner::with_schedule(
+            pitcrew_deciders::schedule::Schedule::from_config(config, transport.clone()),
+        ));
         Ok(Some(Self {
             store,
             intake,
+            deciders,
             bridge,
             transport,
             plex: plex_reader,

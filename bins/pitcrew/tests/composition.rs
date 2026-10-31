@@ -34,6 +34,8 @@ struct MediaReply {
     after_second_file: Option<u64>,
 }
 
+type ModelReply = (serde_json::Value, Option<(Arc<AtomicU64>, u64)>);
+
 #[derive(Clone)]
 struct Fake {
     calls: Arc<Mutex<Vec<String>>>,
@@ -42,6 +44,7 @@ struct Fake {
     advance_on_second_file: Arc<Mutex<Option<Arc<AtomicU64>>>>,
     access_reply: Arc<Mutex<Option<AccessReply>>>,
     media_reply: Arc<Mutex<Option<MediaReply>>>,
+    model_reply: Arc<Mutex<Option<ModelReply>>>,
 }
 impl Fake {
     fn new() -> Self {
@@ -52,11 +55,35 @@ impl Fake {
             advance_on_second_file: Default::default(),
             access_reply: Default::default(),
             media_reply: Default::default(),
+            model_reply: Default::default(),
         }
     }
 }
 impl Transport for Fake {
     fn send(&self, request: Request) -> ResponseFuture<'_> {
+        if request.url.path() == "/v1/chat/completions" {
+            assert_eq!(request.method, Method::Post);
+            assert_eq!(request.url.host_str(), Some("127.0.0.1"));
+            let body = request.body.as_ref().unwrap().to_string();
+            assert!(!body.contains("/media/"));
+            assert!(!body.contains("synthetic-token"));
+            self.calls.lock().unwrap().push(request.url.path().into());
+            let (reply, after) = self
+                .model_reply
+                .lock()
+                .unwrap()
+                .clone()
+                .expect("model call was explicitly enabled by fixture");
+            return Box::pin(async move {
+                if let Some((clock, at)) = after {
+                    clock.store(at, Ordering::SeqCst);
+                }
+                Ok(Response {
+                    status: 200,
+                    body: serde_json::to_vec(&reply).unwrap(),
+                })
+            });
+        }
         assert_eq!(request.method, Method::Get, "shadow called a write");
         assert!(request.body.is_none());
         let path = request.url.path().to_owned();
@@ -1099,3 +1126,6 @@ async fn runtime_revalidates_media_access_and_catalog_at_each_authority_boundary
         }
     }
 }
+
+#[path = "support/model_composition.rs"]
+mod model_composition;

@@ -66,6 +66,11 @@ there is no public port binding to remove. Host networking makes this example
 Linux-specific. Other platforms can use the bare-metal route or adapt networking
 with their own ingress. The supplied examples do not deploy a proxy.
 
+The slim stack image serves control, viewer, admin and bot without FFmpeg. The
+optional agent uses a separate `Dockerfile.agent` image with ffmpeg/ffprobe; build
+it before enabling the agent profile (see the stack guide). Both images run as
+non-root and pin their base images and Debian package snapshot.
+
 The minimum starts control and viewer. The optional media agent provides exact
 probe/decode evidence; without it, replacement requests can remain in review.
 Configure it before expecting useful broken-file diagnoses. The
@@ -117,7 +122,7 @@ Connectivity checks do not decode files or certify safe replacements.
 | Owner desk | Optional | Saved evidence, review requests and audited policy actions |
 | Discord / Telegram / Seerr | Optional | Additional authenticated intake channels |
 | Tautulli / Tracearr bridge | Optional | Playback context; missing telemetry stays unknown |
-| Local or cloud model | Optional | Shadow diagnosis comparisons; rules remain primary |
+| Local or cloud model | Optional | Off by default; per-kind choices stay within rules-approved options and fall back to rules |
 | Notifier / download-source adapters | Optional | Explicitly configured delivery and source evidence |
 
 Start with rules and web intake. Add integrations only as needed using the

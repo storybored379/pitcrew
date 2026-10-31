@@ -1,0 +1,38 @@
+# Overlay for synthetic tests only. All services share the fake's isolated loopback.
+services:
+  fake:
+    image: python:3.13-slim-bookworm@sha256:281d39ff02e3b389401586134ff9e6572954687822a58055ec07a60ded4e0b7f
+    network_mode: none
+    user: "${PITCREW_UID}:${PITCREW_GID}"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    command: ["python3", "-B", "/tests/fake.py"]
+    volumes:
+      - "./tests:/tests:ro"
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import socket; socket.create_connection(('127.0.0.1',18080),1).close()"]
+      interval: 1s
+      timeout: 2s
+      retries: 20
+  control:
+    network_mode: service:fake
+    depends_on:
+      fake:
+        condition: service_healthy
+    healthcheck:
+      interval: 1s
+  web:
+    network_mode: service:fake
+    healthcheck:
+      interval: 1s
+  admin:
+    network_mode: service:fake
+    healthcheck:
+      interval: 1s
+  agent:
+    network_mode: service:fake
+    healthcheck:
+      interval: 1s
+  bot:
+    network_mode: service:fake

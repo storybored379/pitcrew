@@ -263,6 +263,14 @@ impl Sources {
     pub async fn observations(&self) -> Result<Vec<Value>> {
         rows(&self.engine,"SELECT id,source,at,payload FROM (SELECT id,source,at,payload,ROW_NUMBER() OVER (PARTITION BY source ORDER BY id DESC) AS source_row FROM observations WHERE source IN ('diff','arbiter:recorded','agent:shadow','admin:health','decider:comparison','decider:usage')) WHERE source_row<=100 ORDER BY id DESC").await
     }
+    pub async fn unresolved_model_attempts(&self) -> Result<Option<Vec<Value>>> {
+        optional(
+            &self.intake,
+            "model_attempts",
+            "SELECT report_id,started_at FROM model_attempts WHERE comparison IS NULL ORDER BY started_at DESC,report_id DESC LIMIT 100",
+        )
+        .await
+    }
     pub async fn budgets(&self, now: u64) -> Result<Vec<Value>> {
         let rows = sqlx::query("SELECT b.job,b.viewer,b.at,b.units,EXISTS(SELECT 1 FROM ownership o WHERE o.job=b.job) AS active FROM budget_reservations b WHERE b.at>=? OR b.job IN (SELECT job FROM ownership) ORDER BY b.at DESC LIMIT 100")
             .bind(integer(now.saturating_sub(86_399))?).fetch_all(&self.engine).await?;

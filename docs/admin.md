@@ -180,3 +180,15 @@ Removing the floor or disabling release searches/runtime prerequisites disables
 shadow approval, including for cached pending proposals. Changing the floor
 requires a matching new proposal. Action audit distinguishes disabled shadow
 approval from the missing certified transport that prevents live execution.
+
+Accounting also reads the latest 100 unresolved attempts directly from the intake
+`model_attempts` journal (`comparison IS NULL`). Their request delivery and usage
+remain unknown and are listed separately from finalized usage totals. A saved
+completion removes the attempt from this list. Completed attempts cannot hide
+unfinished ones by filling an observation window. An older intake schema without
+this journal displays history as unavailable rather than empty.
+
+Completed setup failures with explicit `accounting.requests_started: 0` do not
+count as dispatched calls. Their saved comparisons remain visible in the parity
+view; older usage records without this field retain their existing call-count
+semantics. Unknown usage never establishes a free request.

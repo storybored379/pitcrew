@@ -982,3 +982,72 @@ async fn explicit_wizard_intent_survives_generic_playback_normalization() {
         assert_eq!(diagnosis.decision.decision.reason, reason, "{issue}");
     }
 }
+
+#[tokio::test]
+async fn model_attempt_accounting_survives_post_call_expiry_and_prevents_replay() {
+    use pitcrew_deciders::shadow::DecisionRunner;
+    let (_dir, store) = setup().await;
+    let id = persist(&store, response(IssueKind::Playback)).await;
+    let catalog = Catalog(Mutex::new(Ok(target())));
+    let access = Access(Mutex::new(Some(grant())));
+    let evidence = evidence();
+    let now = Arc::new(AtomicU64::new(1_000_000));
+    let time = now.clone();
+    let clock = move || time.load(Ordering::SeqCst);
+    let calls = Arc::new(AtomicUsize::new(0));
+    let model = Shadow {
+        calls: calls.clone(),
+        seen: Default::default(),
+        now: Some((now.clone(), 2_000_000)),
+    };
+    let runner = Arc::new(DecisionRunner::new(Box::new(model), Vec::new()).unwrap());
+    let pipeline = Pipeline::new(&store, &catalog, &access, &evidence, &clock).with_runner(runner);
+    assert_eq!(pipeline.diagnose(id).await.unwrap(), Outcome::Unauthorized);
+    assert!(store.diagnosis(id).await.unwrap().is_none());
+    let attempt = store.model_attempt(id).await.unwrap().unwrap();
+    assert_eq!(attempt.started_at, 1000);
+    assert_eq!(
+        attempt.comparison.unwrap()["entries"][0]["result"]["usage"]["input_tokens"],
+        0
+    );
+    // Fresh authority later permits rules, but never a second potentially paid call.
+    now.store(1_000_000, Ordering::SeqCst);
+    assert_eq!(pipeline.diagnose(id).await.unwrap(), Outcome::Persisted);
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        store.diagnosis(id).await.unwrap().unwrap().decider_kind,
+        DeciderKind::Rules
+    );
+}
+
+#[tokio::test]
+async fn interrupted_model_attempt_uses_current_rules_and_never_calls_provider() {
+    let (_dir, store) = setup().await;
+    let id = persist(&store, response(IssueKind::Playback)).await;
+    assert!(store.begin_model_attempt(id, 999).await.unwrap());
+    let calls = Arc::new(AtomicUsize::new(0));
+    let model = Shadow {
+        calls: calls.clone(),
+        seen: Default::default(),
+        now: None,
+    };
+    let runner = Arc::new(
+        pitcrew_deciders::shadow::DecisionRunner::new(Box::new(model), Vec::new()).unwrap(),
+    );
+    let catalog = Catalog(Mutex::new(Ok(target())));
+    let access = Access(Mutex::new(Some(grant())));
+    let evidence = evidence();
+    let pipeline =
+        Pipeline::new(&store, &catalog, &access, &evidence, &|| 1_000_000).with_runner(runner);
+    assert_eq!(pipeline.diagnose(id).await.unwrap(), Outcome::Persisted);
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    assert!(
+        store
+            .model_attempt(id)
+            .await
+            .unwrap()
+            .unwrap()
+            .comparison
+            .is_none()
+    );
+}

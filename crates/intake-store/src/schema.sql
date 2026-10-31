@@ -30,3 +30,11 @@ CREATE TABLE IF NOT EXISTS diagnosis_comparisons (
     report_id INTEGER PRIMARY KEY REFERENCES diagnoses(report_id),
     comparison TEXT NOT NULL
 );
+
+-- One optional model attempt per report. A NULL comparison means dispatch or
+-- completion is uncertain, never zero usage and never permission to retry.
+CREATE TABLE IF NOT EXISTS model_attempts (
+    report_id INTEGER PRIMARY KEY REFERENCES web_intakes(id),
+    started_at INTEGER NOT NULL,
+    comparison TEXT
+);

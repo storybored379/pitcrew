@@ -143,9 +143,9 @@ errors leave the template usable. Drafts have no Debug/Serialize implementation
 and never replace `delivery_text`; promotion to generated live prose remains
 pending the review/certification required by ADR 0005.
 
-These are library boundaries, intentionally not deployed or wired into the
-existing shadow engine binary's live routes. P3 owns execution and P5 owns intake.
-The host supplies collector configuration, trusted identity/correlation, a
-comparison sink, and the chosen provider objects. Live integration, provider
-credentials, durable accounting and graded reply promotion require subsequent
-integration work; there is no automatic cloud traffic from the existing binary.
+The supervised runtime can opt into per-diagnosis model routing as described in
+[Optional model scheduling](pipeline.md#optional-model-scheduling). Defaults remain
+rules only. Scheduled models have bounded calls and a durable, non-retrying attempt
+journal that preserves known usage even when post-call authority checks fail.
+Live execution still requires its separate certification gate. Generated replies
+remain private drafts; enabling a decision route does not change delivered text.

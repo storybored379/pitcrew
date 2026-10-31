@@ -201,7 +201,8 @@ impl<T: Transport> Runtime<T> {
             access,
             &source,
             self.clock.as_ref(),
-        );
+        )
+        .with_runner(self.deciders.clone());
         pipeline
             .diagnose(report.intake.id)
             .await
@@ -398,24 +399,63 @@ impl<T: Transport> Runtime<T> {
     }
 
     async fn telemetry(&self, report: i64) -> Result<(), &'static str> {
-        let Some(comparison) = self
+        let attempt = self
             .intake
-            .diagnosis_comparison(report)
+            .model_attempt(report)
             .await
-            .map_err(|_| "comparison unavailable")?
-        else {
-            return Ok(());
+            .map_err(|_| "model attempt unavailable")?;
+        let comparison = match &attempt {
+            Some(attempt) => attempt.comparison.clone(),
+            None => self
+                .intake
+                .diagnosis_comparison(report)
+                .await
+                .map_err(|_| "comparison unavailable")?,
         };
         let now = self.now_seconds();
+        let Some(comparison) = comparison else {
+            if attempt.is_some() {
+                // Another controller may still complete this attempt. Keep its
+                // provisional audit separate from immutable finalized usage;
+                // a later response can then record known usage exactly once.
+                self.store
+                    .ingest_observation(
+                        "decider:pending",
+                        &report.to_string(),
+                        &serde_json::json!({"provider":"unknown", "usage":null, "unresolved":true}),
+                        now,
+                    )
+                    .await
+                    .map_err(|_| "usage projection unavailable")?;
+            }
+            return Ok(());
+        };
         self.store
             .ingest_observation("decider:comparison", &report.to_string(), &comparison, now)
             .await
             .map_err(|_| "comparison projection unavailable")?;
         if let Some(entries) = comparison.get("entries").and_then(|v| v.as_array()) {
             for (index, entry) in entries.iter().enumerate() {
-                self.store.ingest_observation("decider:usage", &format!("{report}:{index}"),
-                    &serde_json::json!({"provider":entry["provider"], "usage":entry["result"].get("usage"), "failed":entry["failed"]}), now)
-                    .await.map_err(|_| "usage projection unavailable")?;
+                let usage = match entry.get("accounting") {
+                    Some(accounting) => accounting["responses_with_usage"]
+                        .as_u64()
+                        .filter(|count| *count > 0)
+                        .and_then(|_| accounting.get("usage")),
+                    None => entry["result"].get("usage"),
+                };
+                let mut payload = serde_json::json!({"provider":entry["provider"], "usage":usage, "failed":entry["failed"]});
+                if let Some(accounting) = entry.get("accounting") {
+                    payload["accounting"] = accounting.clone();
+                }
+                self.store
+                    .ingest_observation(
+                        "decider:usage",
+                        &format!("{report}:{index}"),
+                        &payload,
+                        now,
+                    )
+                    .await
+                    .map_err(|_| "usage projection unavailable")?;
             }
         }
         Ok(())

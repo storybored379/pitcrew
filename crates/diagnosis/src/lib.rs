@@ -3,4 +3,5 @@
 pub mod collectors;
 pub mod facts;
 pub mod rules;
+pub mod selection;
 pub mod triage;

@@ -278,3 +278,46 @@ async fn comparison_logging_failure_withholds_the_recommendation_and_private_err
         assert_eq!(error.to_string(), "comparison could not be recorded");
     }
 }
+
+#[tokio::test]
+async fn primary_cannot_turn_unknown_evidence_into_replacement() {
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let mut proposed = report(RecommendedAction::Replace);
+    proposed.decision.constraint = Some(ReplacementConstraint::AnyWorking);
+    let runner =
+        DecisionRunner::new(fake(DeciderKind::Jev, Ok(proposed), &calls), Vec::new()).unwrap();
+    let mut source = local();
+    source.facts = EvidenceFacts::default();
+    let result = runner
+        .run(&source, &mut JsonlSink(Vec::new()))
+        .await
+        .unwrap();
+    assert!(result.used_rules_fallback);
+    assert_eq!(result.selected.decision, classify(&source.facts));
+}
+
+#[test]
+fn shared_handles_delegate_accounting_and_plain_deciders_report_no_counters() {
+    struct Counted;
+    impl Decider for Counted {
+        fn kind(&self) -> DeciderKind {
+            DeciderKind::Jev
+        }
+        fn attempt_accounting(&self) -> Option<pitcrew_deciders::providers::Accounting> {
+            Some(pitcrew_deciders::providers::Accounting {
+                requests_started: 7,
+                ..Default::default()
+            })
+        }
+        fn decide<'a>(&'a self, _: &'a RedactedEvidence) -> DecisionFuture<'a> {
+            Box::pin(async { Err(DeciderError::Timeout) })
+        }
+    }
+    assert_eq!(RulesDecider.attempt_accounting(), None);
+    assert_eq!(
+        Decider::attempt_accounting(&Arc::new(Counted))
+            .unwrap()
+            .requests_started,
+        7
+    );
+}

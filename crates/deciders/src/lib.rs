@@ -3,6 +3,7 @@
 pub mod providers;
 pub mod redaction;
 pub mod reply;
+pub mod schedule;
 pub mod shadow;
 
 pub use pitcrew_diagnosis::rules::Decision;
@@ -36,6 +37,10 @@ pub type DecisionFuture<'a> =
 /// remain mandatory at the engine boundary.
 pub trait Decider: Send + Sync {
     fn kind(&self) -> DeciderKind;
+    /// Optional counters; a scheduled request owns its provider instance.
+    fn attempt_accounting(&self) -> Option<providers::Accounting> {
+        None
+    }
     fn decide<'a>(&'a self, evidence: &'a RedactedEvidence) -> DecisionFuture<'a>;
 }
 
@@ -43,6 +48,10 @@ pub trait Decider: Send + Sync {
 impl<T: Decider + ?Sized> Decider for std::sync::Arc<T> {
     fn kind(&self) -> DeciderKind {
         self.as_ref().kind()
+    }
+
+    fn attempt_accounting(&self) -> Option<providers::Accounting> {
+        self.as_ref().attempt_accounting()
     }
 
     fn decide<'a>(&'a self, evidence: &'a RedactedEvidence) -> DecisionFuture<'a> {

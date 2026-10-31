@@ -21,6 +21,9 @@ fn agent_defaults_are_local_and_optional() {
     assert_eq!(a.server.decode_offsets_percent, vec![0, 40, 80]);
     assert_eq!(a.server.filesystem_workers, 4);
     assert!(a.server.plex_log_directory.is_none());
+    assert!(!a.checks.read_timeout_policy.enabled);
+    assert_eq!(a.checks.read_timeout_policy.attempts, 3);
+    assert_eq!(a.checks.read_timeout_policy.control_timeout_ms, 1000);
 }
 #[test]
 fn agent_rejects_unsafe_network_and_resource_settings() {
@@ -105,4 +108,54 @@ fn media_constructor_limits_are_rejected_at_the_named_config_key() {
         "{BASE}\n[agent.checks]\nsymlink_hop_limit=40\nread_bytes=1048576\nread_offsets_bytes=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]"
     );
     Config::parse(&boundary).unwrap();
+}
+
+#[test]
+fn repeated_read_timeout_policy_can_be_enabled_explicitly() {
+    let source = format!(
+        "{BASE}\n[agent.checks.read_timeout_policy]\nenabled = true\nattempts = 3\ncontrol_timeout_ms = 1000"
+    );
+    let policy = Config::parse(&source)
+        .unwrap()
+        .agent
+        .unwrap()
+        .checks
+        .read_timeout_policy;
+    assert!(policy.enabled);
+    assert_eq!(policy.attempts, 3);
+    assert_eq!(policy.control_timeout_ms, 1000);
+}
+
+#[test]
+fn repeated_read_timeout_policy_rejects_unsafe_bounds_with_named_keys() {
+    for (setting, field) in [
+        ("attempts = 0", "attempts"),
+        ("attempts = 1", "attempts"),
+        ("attempts = 6", "attempts"),
+        ("control_timeout_ms = 0", "control_timeout_ms"),
+        ("control_timeout_ms = 5001", "control_timeout_ms"),
+    ] {
+        let source = format!("{BASE}\n[agent.checks.read_timeout_policy]\n{setting}");
+        assert_eq!(
+            Config::parse(&source).unwrap_err().field,
+            format!("agent.checks.read_timeout_policy.{field}")
+        );
+    }
+    for read_timeout in [999, 1000] {
+        let source = format!(
+            "{BASE}\n[agent.checks]\nread_timeout_ms = {read_timeout}\n[agent.checks.read_timeout_policy]\nenabled = true"
+        );
+        assert_eq!(
+            Config::parse(&source).unwrap_err().field,
+            "agent.checks.read_timeout_policy.control_timeout_ms"
+        );
+    }
+    for (attempts, control_timeout) in [(2, 1), (5, 5000)] {
+        let source = format!(
+            "{BASE}\n[agent.checks.read_timeout_policy]\nenabled = true\nattempts = {attempts}\ncontrol_timeout_ms = {control_timeout}"
+        );
+        Config::parse(&source).unwrap();
+    }
+    let source = format!("{BASE}\n[agent.checks]\nread_timeout_ms = 1");
+    Config::parse(&source).unwrap(); // Disabled policy preserves old timeout settings.
 }

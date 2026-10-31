@@ -468,6 +468,18 @@ impl App {
                     ],
                     &totals,
                 ));
+                html.push_str("<h2>Unresolved model attempts</h2><p class=\"muted\">Request delivery and usage are unknown. These attempts are excluded from finalized usage totals.</p>");
+                if let Some(attempts) = self.sources.unresolved_model_attempts().await? {
+                    html.push_str(&table(
+                        "unresolved model attempts",
+                        &[("report_id", "Report"), ("started_at", "Started at")],
+                        &attempts,
+                    ));
+                } else {
+                    html.push_str(
+                        "<p class=\"notice\">Unresolved attempt history is unavailable.</p>",
+                    );
+                }
                 html
             }
             "/health" => {

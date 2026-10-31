@@ -12,7 +12,7 @@ use pitcrew_diagnosis::{
 use pitcrew_domain::FileIdentity;
 use pitcrew_intake_store::{Store, diagnoses::Diagnosis};
 use serde::{Deserialize, Serialize};
-use std::{future::Future, pin::Pin};
+use std::{future::Future, pin::Pin, sync::Arc};
 
 pub mod collectors;
 
@@ -104,7 +104,7 @@ pub struct Pipeline<'a> {
     access: &'a dyn AccessProvider,
     evidence: &'a dyn EvidenceSource,
     clock: &'a Clock,
-    runner: DecisionRunner,
+    runner: Arc<DecisionRunner>,
 }
 impl<'a> Pipeline<'a> {
     /// Clock values are Unix milliseconds; catalog/access/store times are seconds.
@@ -121,7 +121,7 @@ impl<'a> Pipeline<'a> {
             access,
             evidence,
             clock,
-            runner: DecisionRunner::default(),
+            runner: Arc::new(DecisionRunner::default()),
         }
     }
     /// Rules remain primary. Provider constructors independently enforce consent.
@@ -146,8 +146,14 @@ impl<'a> Pipeline<'a> {
         }
         let mut shadows = cloud;
         shadows.extend(local);
-        self.runner = DecisionRunner::new(Box::new(RulesDecider), shadows)?;
+        self.runner = Arc::new(DecisionRunner::new(Box::new(RulesDecider), shadows)?);
         Ok(self)
+    }
+
+    /// Runtime-selected rules/model policy. Provider failures remain rules fallback.
+    pub fn with_runner(mut self, runner: Arc<DecisionRunner>) -> Self {
+        self.runner = runner;
+        self
     }
 
     pub async fn diagnose(&self, report_id: i64) -> Result<Outcome, Error> {
@@ -224,7 +230,24 @@ impl<'a> Pipeline<'a> {
         };
         // Buffer the sanitized comparison, then commit it with the diagnosis.
         let mut sink = JsonlSink(Vec::new());
-        let comparison = self.runner.run(&local, &mut sink).await?;
+        let model_selected = self.runner.uses_model(&facts);
+        let reserved = model_selected
+            && self
+                .store
+                .begin_model_attempt(report_id, (self.clock)() / 1000)
+                .await?;
+        let comparison = if model_selected && !reserved {
+            // A prior process may have sent the request. Never replay it on an
+            // ambiguous result; current deterministic facts remain available.
+            DecisionRunner::default().run(&local, &mut sink).await?
+        } else {
+            self.runner.run(&local, &mut sink).await?
+        };
+        if reserved {
+            self.store
+                .finish_model_attempt(report_id, &comparison)
+                .await?;
+        }
         let finished = (self.clock)();
         let now = finished / 1000;
         // Slow collectors/cloud calls cannot extend the original access lease.
@@ -246,7 +269,11 @@ impl<'a> Pipeline<'a> {
         let diagnosis = Diagnosis {
             report_id,
             decided_at: now,
-            decider_kind: DeciderKind::Rules,
+            decider_kind: if comparison.used_rules_fallback {
+                DeciderKind::Rules
+            } else {
+                comparison.primary
+            },
             decision: comparison.selected.clone(),
             evidence_summary: facts,
             resource: target.resource,

@@ -1,7 +1,7 @@
 //! Bind generic evidence to the local API. No upstream client is constructed.
 use crate::{
     http::{ApiError, InspectFuture, Inspector, Operation},
-    media::{MediaAgent, MediaError},
+    media::{MediaAgent, MediaError, MediaInspection},
     plex_logs::{PlexLogReader, PlexLogSnapshot},
 };
 use pitcrew_domain::media::{
@@ -81,26 +81,42 @@ impl Inspector for LocalInspector {
                 Operation::Probe { path } | Operation::File { path } => (path, false),
                 Operation::PlexFailures { .. } => unreachable!(),
             };
-            let evidence = self
+            let inspection = self
                 .media
-                .inspect(Path::new(path), decode)
+                .inspect_report(Path::new(path), decode)
                 .await
                 .map_err(|error| match error {
                     MediaError::Forbidden => ApiError::Forbidden,
                     MediaError::Busy => ApiError::Busy,
                     MediaError::Changed | MediaError::InvalidConfig => ApiError::Unavailable,
                 })?;
-            Ok(match operation {
-                Operation::Evidence { .. } => {
-                    serde_json::to_value(&evidence).map_err(|_| ApiError::Unavailable)?
-                }
-                Operation::Probe { .. } => probe_response(&evidence),
-                Operation::Decode { .. } => decode_response(&evidence),
-                Operation::File { .. } => file_response(&evidence),
-                Operation::PlexFailures { .. } => unreachable!(),
-            })
+            inspection_response(operation, &inspection)
         })
     }
+}
+
+pub(crate) fn inspection_response(
+    operation: Operation,
+    inspection: &MediaInspection,
+) -> Result<Value, ApiError> {
+    let evidence = &inspection.evidence;
+    let is_decode = matches!(operation, Operation::Decode { .. });
+    let mut response = match operation {
+        Operation::Evidence { .. } => {
+            serde_json::to_value(evidence).map_err(|_| ApiError::Unavailable)?
+        }
+        Operation::Probe { .. } => probe_response(evidence),
+        Operation::Decode { .. } => decode_response(evidence),
+        Operation::File { .. } => file_response(evidence),
+        Operation::PlexFailures { .. } => return Err(ApiError::Unavailable),
+    };
+    if let Some(confirmation) = &inspection.read_timeout_confirmation {
+        if is_decode && confirmation.confirmed() {
+            response["verdict"] = json!("bad");
+        }
+        response["read_timeout_confirmation"] = json!(confirmation);
+    }
+    Ok(response)
 }
 
 pub fn probe_response(e: &MediaEvidence) -> Value {

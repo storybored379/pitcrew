@@ -37,7 +37,7 @@ it is not permission to mutate media or a claim that playback is fixed.
    database timestamps are Unix **seconds**. `pipeline::collectors::Collectors`
    composes the P1 agent, native Tautulli and optional Tracearr bridge clients.
    Configure their existing endpoint deadlines and response limits explicitly.
-6. Rules are always primary. `with_shadows(providers, cloud_consent)` requires
+6. Rules are primary by default. Optional runtime selection is described below. `with_shadows(providers, cloud_consent)` requires
    explicit consent for any nonempty shadow list. Provider construction also
    enforces its own consent and request limits. No provider is constructed or
    called by default. Shadow decisions never replace the rules decision.
@@ -71,7 +71,7 @@ untagged audio streams do not prove that a requested language is absent.
 | --- | --- |
 | `report_id` | INTEGER primary key, references `web_intakes(id)` |
 | `decided_at` | INTEGER Unix seconds |
-| `decider_kind` | TEXT serialized enum name, `rules` for this pipeline |
+| `decider_kind` | TEXT serialized enum name, `rules` or the selected model family |
 | `decision` | TEXT JSON, the P4 `DecisionReport` including `decision` and `usage` |
 | `evidence_summary` | TEXT JSON, P4 `EvidenceFacts` |
 | `resource` | TEXT scoped arr media identity |
@@ -155,8 +155,8 @@ Dolby Vision profiles. Unknown, conflicting or incomplete metadata remains unkno
 The no-profile-5 invariant is checked against exact replacement source bytes before
 import and exact destination bytes before Ready. Alternate-HD availability, provider
 throughput, Plex analysis and positive server-health diagnosis facts remain unknown
-without their respective certified collectors. The runtime currently uses rules;
-optional model/telemetry scheduling remains unwired.
+without their respective certified collectors. The runtime defaults to rules; optional model scheduling is described below.
+Playback telemetry scheduling remains unwired.
 
 ## Action attribution in shadow comparisons
 
@@ -196,3 +196,54 @@ My reports reads the account-scoped `report_progress` projection: received, revi
 advice, working, fixed or could not fix. Web reports have no guessed channel route.
 Bot routes require an exact stored message reservation and current authenticated
 account link; a Plex account number alone never becomes a notification destination.
+
+## Optional model scheduling
+
+The supervised runtime uses rules by default. `[models] enabled = true` opts into
+per-kind routing after deterministic diagnosis; unspecified kinds still use rules.
+`[[models.routes]]` matches the rules' diagnosis kind, never model-supplied labels
+or viewer text. `provider` can be `rules`, `local`, `cloud`, `jev`, or `anthropic`.
+`local` and `cloud` require a named `[[providers.openai_compatible]]` profile with
+matching locality and `shadow = false`; native selections use their corresponding
+`[providers.jev]` or `[providers.anthropic]` settings with `shadow = false`.
+Cloud selections also require existing explicit cloud consent. Legacy
+`providers.decider` does not enable runtime scheduling by itself.
+
+Every route has `timeout_seconds` (default 30, allowed 1–120), covering both
+provider/secret construction and the request. At most two detached constructor
+workers may run per routing policy; a hung secret source retains its slot until
+it returns, and later requests fall back instead of spawning unlimited workers.
+Missing secrets,
+invalid provider construction, unavailable servers, timeouts, malformed answers,
+and inadmissible choices all fall back to current rules. There are no automatic
+model retries. Both local and cloud models receive the existing closed redacted
+fact projection: no viewer words, account identifiers, titles, paths, or tokens.
+Only an explicitly selected route is contacted; configured shadow profiles are
+not automatically scheduled.
+
+Rules own the allowed choices. Agreement preserves the exact deterministic action,
+reason, diagnosis, and replacement constraint. A model may choose admin review or
+more evidence; it cannot suppress urgent alerts, explicit closure, or injection
+review. It cannot invent replacement eligibility, weaken language/HDR constraints,
+close a report, or introduce a new mutation. Access, exact file identity, budgets,
+verified replacement, and imported-file decode gates remain mandatory downstream.
+Access and catalog identity are checked again after the call.
+
+Each selected model attempt is durably reserved before dispatch, at most once per
+report. Its redacted comparison is saved independently of the diagnosis, so usage
+survives post-call authority expiry. On restart, an unfinished attempt uses current
+rules without sending again. The existing saved comparison/usage producer recovers
+these records into the engine journal; selected diagnosis provenance distinguishes
+rules fallback from a model preference. Malformed answers retain any valid reported
+usage. Timeout/interruption without reported usage is unknown, never zero spending.
+Provider construction failures record zero started requests. Optional route
+`cost_rates` contain input, output, cache-creation and cache-read microusd-per-million
+token rates supplied by the administrator; estimates are not invoices. Usage records
+contain provider families rather than administrator profile names.
+
+This is a conservative attempt journal, not an exact billing ledger: a crash between
+a provider response and the local commit leaves usage unknown. Unfinished attempts
+remain in `model_attempts` and provisional `decider:pending` observations, separately
+from finalized usage totals. A concurrent controller's later response produces one
+finalized usage record without overwriting the provisional audit or double-counting.
+Model outputs remain recommendations, and enabling them does not enable live execution.

@@ -171,6 +171,10 @@ impl<T: Transport> JevDecider<T> {
 }
 
 impl<T: Transport> Decider for JevDecider<T> {
+    fn attempt_accounting(&self) -> Option<Accounting> {
+        Some(self.accounting())
+    }
+
     fn kind(&self) -> DeciderKind {
         DeciderKind::Jev
     }
@@ -252,6 +256,10 @@ impl<T: Transport> ClaudeDecider<T> {
 }
 
 impl<T: Transport> Decider for ClaudeDecider<T> {
+    fn attempt_accounting(&self) -> Option<Accounting> {
+        Some(self.accounting())
+    }
+
     fn kind(&self) -> DeciderKind {
         DeciderKind::Anthropic
     }

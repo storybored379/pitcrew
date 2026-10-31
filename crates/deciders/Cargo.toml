@@ -18,6 +18,7 @@ tokio = { version = "1", features = ["time", "sync"] }
 url = "2"
 
 [dev-dependencies]
+tempfile = "3"
 proptest.workspace = true
 tokio = { version = "1", features = ["macros", "rt", "test-util"] }
 

@@ -29,8 +29,8 @@ credentials or upstream response bodies.
 ## Compose
 
 The Linux [Compose file](../packaging/compose.yaml) uses host networking because
-the binaries require loopback listeners. All services share the stack image,
-read-only configuration and private secrets. The state directory is writable only
+the binaries require loopback listeners. Control, viewer, owner desk and channels share the slim stack image. The optional
+agent uses its own FFmpeg image. Services share read-only configuration and private secrets. The state directory is writable only
 where needed. The root filesystem is read-only, capabilities are dropped and the
 container UID/GID matches the account that created the private files.
 
@@ -57,12 +57,17 @@ unhealthy API requires authenticated doctor checks to diagnose. Channels have no
 HTTP health endpoint and do not inherit the control check. If listener ports
 change, change the corresponding `.env` healthcheck ports too.
 
-Images are multi-stage builds; the runtime has binaries, certificates and the
-needed diagnostic tools, without the Rust toolchain. The shared image includes
-ffmpeg, ffprobe and timezone data. `Dockerfile` and `Dockerfile.agent` are smaller
-component-specific alternatives. There is no published image at this pre-alpha
-stage. `PITCREW_IMAGE` can select a reviewed future image by digest without
-changing the service definitions. Use `up --no-build` to avoid rebuilding it.
+Images are multi-stage, non-root builds. `Dockerfile.stack` contains the control,
+web, admin and bot binaries, certificates and curl for health checks; it has no
+FFmpeg tools or Rust toolchain. `Dockerfile.agent` contains the agent, ffmpeg,
+ffprobe and timezone data. `Dockerfile` remains a control-only alternative.
+Base images are pinned by multi-platform manifest digest, Cargo uses the committed
+lockfile, and Debian packages come from a fixed signed snapshot. Refresh the base
+digests and `packaging/debian.sources` together to take security updates. These
+input pins do not assert byte-for-byte identical image metadata across builders.
+There is no published image at this pre-alpha stage. `PITCREW_IMAGE` and
+`PITCREW_AGENT_IMAGE` independently select reviewed images by digest; use
+`up --no-build` to avoid rebuilding them.
 
 ### Optional media agent
 
@@ -75,6 +80,7 @@ and arr**. Include final symlink destinations in both the mounts and allow-list.
 An arbitrary new container path will not match upstream file identity.
 
 ```sh
+docker build -f Dockerfile.agent -t pitcrew-agent:local .
 docker compose --env-file .env -f packaging/compose.yaml --profile agent up -d --no-build
 ```
 
@@ -183,9 +189,11 @@ proposed. Shadow progress never claims a completed repair.
 
 Saved diagnosis comparisons and usage are projected idempotently to the engine
 observation journal. Saved health describes the runtime's own bounded operations;
-the admin UI performs no probes. Rules remain the runtime decider. Optional cloud
-and local model scheduling, optional playback telemetry enrichment, and autonomous
-live effect orchestration remain separate integration work. A configured admin
+the admin UI performs no probes. Rules remain the default runtime decider. Optional local/cloud model selection
+by diagnosis kind uses only rules-approved options and falls back to rules on
+failure; see [model scheduling](pipeline.md#optional-model-scheduling). Playback
+telemetry enrichment and autonomous live effect orchestration remain separate
+integration work. A configured admin
 consumer reads the private admin journal that the owner UI creates. Services can
 start in any order: until the journal exists, the controller logs
 `admin_journal_waiting` each tick and connects once it appears.
@@ -270,3 +278,21 @@ and uncertain sends are not automatically repeated. Loopback HTTP tests cover
 request/receipt behavior, not certification of an installed platform. Live notification
 preparation and scheduling, held-category/upgrade-guard transports and dynamic-range
 collector certification remain deferred as detailed in the certification checklist.
+
+## Image verification
+
+CI builds both images without publishing them, then starts the shipped Compose
+services with a test overlay. The overlay puts control, web, admin and agent in
+an owned fake's network namespace with only loopback and no published ports.
+It verifies private-file permissions, health, authenticated agent liveness,
+catalog sync, exact read-only fake requests, and the presence or absence of FFmpeg.
+To repeat this test from a clean checkout, build both images as above, then run:
+
+```sh
+python3 -B packaging/tests/smoke.py
+```
+
+The test requires a non-root Linux account with Docker access and downloads only
+the digest-pinned public Python image for its fake. It creates temporary synthetic
+config/state under `target`, tears down its own Compose project on exit, and never
+uses an installation's configuration or credentials. It does not certify live repairs.

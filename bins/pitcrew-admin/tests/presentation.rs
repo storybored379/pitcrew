@@ -67,6 +67,27 @@ fn calls_without_any_usage_never_display_a_zero_cost_estimate() {
     assert_eq!(rows[0]["estimated_known_microusd"], Value::Null);
 }
 #[test]
+fn accounting_excludes_explicit_zero_dispatch_but_preserves_legacy_unknown_calls() {
+    let rates = BTreeMap::new();
+    let setup_failure = json!({"provider":"anthropic","usage":null,"failed":true,"accounting":{"requests_started":0}});
+    assert!(
+        accounting::summarize(std::slice::from_ref(&setup_failure), &rates)
+            .unwrap()
+            .is_empty()
+    );
+    let records = [
+        setup_failure,
+        json!({"provider":"anthropic","usage":null,"accounting":{"requests_started":1}}),
+        json!({"provider":"anthropic","usage":null}),
+        json!({"provider":"anthropic","usage":null,"accounting":{}}),
+        json!({"provider":"anthropic","usage":null,"accounting":{"requests_started":"0"}}),
+    ];
+    let rows = accounting::summarize(&records, &rates).unwrap();
+    assert_eq!(rows[0]["calls"], 4);
+    assert_eq!(rows[0]["calls_without_usage"], 4);
+    assert_eq!(rows[0]["estimated_known_microusd"], Value::Null);
+}
+#[test]
 fn health_freshness_never_infers_live_health_and_handles_future_or_unknown_clocks() {
     let records = vec![
         json!({"source":"admin:health","at":100,"payload":{"component":"agent","status":"up"}}),
@@ -380,4 +401,79 @@ fn native_template_snapshot_includes_table_evidence_and_pending_action() {
         std::fs::write(&path, &html).unwrap();
     }
     assert_eq!(html, std::fs::read_to_string(path).unwrap());
+}
+
+#[tokio::test]
+async fn accounting_shows_unresolved_journal_attempts_until_completion_without_changing_totals() {
+    let s = Setup::new(true).await;
+    s.report().await;
+    sqlx::query("INSERT INTO model_attempts(report_id,started_at) VALUES(1,95)")
+        .execute(&s.intake_sql)
+        .await
+        .unwrap();
+    // More than a page of newer completed attempts must not hide this unfinished one.
+    sqlx::raw_sql("WITH RECURSIVE newer(id) AS (SELECT 2 UNION ALL SELECT id+1 FROM newer WHERE id<102) INSERT INTO web_intakes(id,channel,message,account,conversation,response,created) SELECT id,'web','model-'||id,'1001','conversation','{}',96 FROM newer; INSERT INTO model_attempts(report_id,started_at,comparison) SELECT id,96,'{}' FROM web_intakes WHERE id>1;")
+        .execute(&s.intake_sql)
+        .await
+        .unwrap();
+    s.engine
+        .ingest_observation(
+            "decider:usage",
+            "completed",
+            &json!({"provider":"anthropic","usage":usage(12,34)}),
+            96,
+        )
+        .await
+        .unwrap();
+    let (cookie, _) = s.session().await;
+    let (status, _, before) = call(&s.app, "GET", "/accounting", &cookie, "").await;
+    assert_eq!(status, 200);
+    let (totals, pending) = before
+        .split_once("<h2>Unresolved model attempts</h2>")
+        .expect("an unfinished journal attempt must remain visible without an observation");
+    assert!(pending.contains("<td>1</td><td>95</td>"));
+    assert!(pending.contains("Request delivery and usage are unknown."));
+    assert!(!pending.contains("<td>102</td>"));
+
+    sqlx::query("UPDATE model_attempts SET started_at=? WHERE report_id=1")
+        .bind("<script>example</script>")
+        .execute(&s.intake_sql)
+        .await
+        .unwrap();
+    let escaped = call(&s.app, "GET", "/accounting", &cookie, "").await.2;
+    assert!(escaped.contains("&lt;script&gt;example&lt;/script&gt;"));
+    assert!(!escaped.contains("<script>example</script>"));
+
+    sqlx::query("UPDATE model_attempts SET comparison='{}' WHERE report_id=1")
+        .execute(&s.intake_sql)
+        .await
+        .unwrap();
+    let (status, _, after) = call(&s.app, "GET", "/accounting", &cookie, "").await;
+    assert_eq!(status, 200);
+    let (after_totals, pending) = after
+        .split_once("<h2>Unresolved model attempts</h2>")
+        .unwrap();
+    assert_eq!(after_totals, totals);
+    assert!(pending.contains("No unresolved model attempts recorded."));
+    assert!(!pending.contains("<td>1</td>"));
+}
+
+#[tokio::test]
+async fn accounting_distinguishes_missing_attempt_history_from_an_empty_journal() {
+    let s = Setup::new(true).await;
+    sqlx::query("DROP TABLE model_attempts")
+        .execute(&s.intake_sql)
+        .await
+        .unwrap();
+    let (cookie, _) = s.session().await;
+    let (status, _, page) = call(&s.app, "GET", "/accounting", &cookie, "").await;
+    assert_eq!(status, 200);
+    assert!(page.contains("Unresolved attempt history is unavailable."));
+    assert!(!page.contains("No unresolved model attempts recorded."));
+
+    sqlx::query("CREATE TABLE model_attempts(unexpected TEXT)")
+        .execute(&s.intake_sql)
+        .await
+        .unwrap();
+    assert_eq!(call(&s.app, "GET", "/accounting", &cookie, "").await.0, 503);
 }

@@ -170,6 +170,7 @@ pub struct MediaChecks {
     pub symlink_timeout_ms: u64,
     pub mount_timeout_ms: u64,
     pub read_timeout_ms: u64,
+    pub read_timeout_policy: ReadTimeoutPolicy,
     pub read_offsets_bytes: Vec<u64>,
     pub read_bytes: u64,
     pub slow_first_byte_ms: u64,
@@ -184,12 +185,54 @@ impl Default for MediaChecks {
             symlink_timeout_ms: 5000,
             mount_timeout_ms: 5000,
             read_timeout_ms: 15_000,
+            read_timeout_policy: ReadTimeoutPolicy::default(),
             read_offsets_bytes: vec![0, 1_048_576, 16_777_216],
             read_bytes: 1_048_576,
             slow_first_byte_ms: 3000,
             slow_bytes_per_second: 1_048_576,
             header_timeout_seconds: 180,
         }
+    }
+}
+
+/// Repeated read timeouts remain unknown unless explicitly enabled. Every
+/// timed-out attempt needs a prompt direct-I/O control on the same pinned file.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ReadTimeoutPolicy {
+    pub enabled: bool,
+    /// Total attempts, including the initial read. Never an unbounded retry loop.
+    pub attempts: u8,
+    pub control_timeout_ms: u64,
+}
+
+impl Default for ReadTimeoutPolicy {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            attempts: 3,
+            control_timeout_ms: 1000,
+        }
+    }
+}
+
+impl ReadTimeoutPolicy {
+    pub fn validate(&self, read_timeout_ms: u64) -> Result<(), ConfigError> {
+        if !(2..=5).contains(&self.attempts) {
+            return Err(invalid(
+                "agent.checks.read_timeout_policy.attempts",
+                "must be between 2 and 5",
+            ));
+        }
+        if !(1..=5000).contains(&self.control_timeout_ms)
+            || (self.enabled && self.control_timeout_ms >= read_timeout_ms)
+        {
+            return Err(invalid(
+                "agent.checks.read_timeout_policy.control_timeout_ms",
+                "must be between 1 and 5000 and, when enabled, less than read_timeout_ms",
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -358,6 +401,9 @@ pub(super) fn validate(config: &Config) -> Result<(), ConfigError> {
     }
     if let Some(agent) = &config.agent {
         let checks = &agent.checks;
+        checks
+            .read_timeout_policy
+            .validate(checks.read_timeout_ms)?;
         if !(1..=40).contains(&checks.symlink_hop_limit) {
             return Err(invalid(
                 "agent.checks.symlink_hop_limit",

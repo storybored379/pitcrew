@@ -64,7 +64,12 @@ services:
   agent:
     <<: *common
     profiles: ["agent"]
-    command: ["pitcrew-agent", "--config", "/config/pitcrew.toml"]
+    build:
+      context: ..
+      dockerfile: Dockerfile.agent
+    image: ${PITCREW_AGENT_IMAGE:-pitcrew-agent:local}
+    entrypoint: ["/usr/local/bin/pitcrew-agent"]
+    command: ["--config", "/config/pitcrew.toml"]
     # Preserve exact upstream paths in an override; these defaults are examples.
     volumes:
       - "${PITCREW_HOME}:/config:ro"

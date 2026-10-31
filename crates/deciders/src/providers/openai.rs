@@ -123,6 +123,18 @@ pub fn from_profile<T: Transport>(
     api_key: Option<&str>,
     transport: T,
 ) -> Result<OpenAiCompatibleDecider<T>, DeciderError> {
+    from_profile_with_policy(profile, cloud_opt_in, api_key, transport, None, None)
+}
+
+/// Same profile mapping, with administrator-selected request time and cost rates.
+pub fn from_profile_with_policy<T: Transport>(
+    profile: &pitcrew_config::OpenAiCompatibleProvider,
+    cloud_opt_in: bool,
+    api_key: Option<&str>,
+    transport: T,
+    timeout: Option<std::time::Duration>,
+    rates: Option<super::CostRates>,
+) -> Result<OpenAiCompatibleDecider<T>, DeciderError> {
     use pitcrew_config::{OpenAiPreset as P, StructuredOutput as S, TokenField as F};
     let preset = match profile.preset {
         P::Openai => Some(Preset::OpenAi),
@@ -175,6 +187,10 @@ pub fn from_profile<T: Transport>(
         };
     }
     config.cloud_opt_in = cloud_opt_in;
+    if let Some(timeout) = timeout {
+        config.timeout = timeout;
+    }
+    config.cost_rates = rates;
     OpenAiCompatibleDecider::new(config, options, api_key, transport)
 }
 
@@ -266,6 +282,10 @@ impl<T: Transport> OpenAiCompatibleDecider<T> {
 }
 
 impl<T: Transport> Decider for OpenAiCompatibleDecider<T> {
+    fn attempt_accounting(&self) -> Option<Accounting> {
+        Some(self.accounting())
+    }
+
     fn kind(&self) -> DeciderKind {
         DeciderKind::OpenAiCompatible
     }

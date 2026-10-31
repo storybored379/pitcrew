@@ -25,7 +25,6 @@ FFmpeg/timezone data, running as UID 65532. Mount config, secrets, logs and both
 media trees read-only at their configured paths. The listener is loopback-only;
 a container needs an ingress in the same network namespace (or Linux host
 networking). Published bridge ports alone cannot reach a loopback listener.
-Packaging is supplied for review; no container image or service was run in P1.
 
 ## HTTP and security
 
@@ -117,8 +116,64 @@ those methods cannot yet replace all uses of the old service.
 Header probes may take longer than the legacy client's 12-second deadline on cold
 storage; align its timeout with this agent or accept unknown and retry later.
 `/file` currently runs the bounded generic header/read checks too. `unknown` never
-means ready. The compatibility decode verdict is conservative: any no-duration,
-slow-read or media fault prevents `ok`. It still only covers the reported range.
+means ready. A missing duration or media defect prevents `ok`. Slow-read evidence
+alone does not make fully decoded samples bad. The verdict still only covers the
+reported ranges.
+
+### Optional repeated read timeout policy
+
+A read timeout gives `unknown` by default. To opt into a stricter local decode
+verdict, configure:
+
+```toml
+[agent.checks.read_timeout_policy]
+enabled = false
+attempts = 3
+control_timeout_ms = 1000
+```
+
+With `enabled = true`, the agent reports `bad` only after the same byte range on
+the same pinned file times out on every attempt, including the initial read.
+Each timeout must be followed by a successful control read from a disjoint,
+aligned range on that file. The control reads at least the target byte count,
+rounded up to 4 KiB, in less than `control_timeout_ms`. A small fast control cannot
+qualify a larger read that timed out on uniformly slow storage. The control opens
+a separate read-only descriptor with Linux `O_DIRECT`, reads in 4 KiB chunks,
+and refuses known buffered-I/O fallback cases. All chunks share one deadline. A final
+descriptor, metadata and path check must still confirm the exact file identity.
+
+Promotion is supported only on extent-mapped Linux ext4 files and XFS. The ext4
+inode must report `EXT4_EXTENTS_FL` through the read-only `FS_IOC_GETFLAGS` query;
+legacy ext2/ext3 or block-mapped ext4 files remain `unknown`. Encrypted,
+verity-protected, inline-data and data-journaled ext4 inodes are refused. Both
+supported filesystems must report positive `STATX_DIOALIGN` capability compatible
+with the control buffer, offset and length. This also excludes ext4's mount-wide
+`data=journal` fallback; kernels without this capability query (introduced in
+Linux 6.1) remain `unknown`. The [Linux ext4 direct-I/O eligibility check](https://github.com/torvalds/linux/blob/master/fs/ext4/inode.c)
+also supplies its `STATX_DIOALIGN` result.
+`SEEK_DATA`/`SEEK_HOLE` must report data throughout the complete control range;
+short or all-zero chunks are also rejected because sparse or unwritten extents
+can answer without a storage read. FUSE, NFS, overlay, memory-backed and unknown
+filesystems remain `unknown`, even when they accept `O_DIRECT`: their cache
+semantics have not been certified. These checks provide conservative evidence
+of sampled local read responsiveness, not universal backing-device health or
+proof of file corruption.
+
+`attempts` accepts 2–5; `control_timeout_ms` accepts 1–5000 and must be less than
+`agent.checks.read_timeout_ms` when enabled. A recovered retry, failed control,
+slow or hung storage, unsupported direct I/O, insufficient file space for a
+disjoint control, or exhausted worker capacity leaves the timeout `unknown`.
+The original HTTP request deadline covers all retries and controls. Every
+timed-out filesystem operation keeps its worker slot until it returns; this
+policy does not increase the worker limit. If all target reads remain blocked,
+confirmation needs at least `attempts + 1` available filesystem worker slots.
+
+The `/v1/decodecheck` and compatibility `/decodecheck` verdicts use this policy.
+When confirmation is attempted, evidence, probe, file and decode responses add
+`read_timeout_confirmation`, containing every target attempt, control timing,
+configured bounds and the result. Ordinary responses are unchanged. The generic
+`MediaEvidence` still records `TimedOut` and no successful decode; this setting
+does not authorize engine replacement or claim corrupted bytes were decoded.
 
 The nzbdav/InfiniDysk `SourceAdapter` normalizes read-only observations from a
 fakeable transport; results explicitly include `Unknown` for the unverified

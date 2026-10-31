@@ -29,6 +29,24 @@ use tokio::{
     sync::{Semaphore, oneshot},
 };
 
+#[path = "read_timeout.rs"]
+mod read_timeout;
+use read_timeout::{FileRangeReader, RangeReader, ReadTimeoutConfirmation};
+
+pub(crate) struct MediaInspection {
+    pub(crate) evidence: MediaEvidence,
+    pub(crate) read_timeout_confirmation: Option<ReadTimeoutConfirmation>,
+}
+
+impl From<MediaEvidence> for MediaInspection {
+    fn from(evidence: MediaEvidence) -> Self {
+        Self {
+            evidence,
+            read_timeout_confirmation: None,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct MediaConfig {
     /// Absolute directories for caller-visible paths. Logical aliases may be
@@ -40,6 +58,7 @@ pub struct MediaConfig {
     pub process_timeout: Duration,
     pub header_timeout: Duration,
     pub read_timeout: Duration,
+    pub read_timeout_policy: pitcrew_config::ReadTimeoutPolicy,
     pub read_offsets_bytes: Vec<u64>,
     pub slow_bytes_per_second: u64,
     pub symlink_hop_limit: usize,
@@ -63,6 +82,7 @@ impl Default for MediaConfig {
             process_timeout: Duration::from_secs(180),
             header_timeout: Duration::from_secs(180),
             read_timeout: Duration::from_secs(5),
+            read_timeout_policy: pitcrew_config::ReadTimeoutPolicy::default(),
             read_offsets_bytes: Vec::new(),
             slow_bytes_per_second: 1024,
             symlink_hop_limit: 40,
@@ -111,6 +131,10 @@ impl MediaAgent {
             || config.process_timeout.is_zero()
             || config.header_timeout.is_zero()
             || config.read_timeout.is_zero()
+            || config
+                .read_timeout_policy
+                .validate(millis(config.read_timeout))
+                .is_err()
             || config.symlink_hop_limit == 0
             || config.symlink_hop_limit > 40
             || config.read_offsets_bytes.len() > 16
@@ -161,18 +185,43 @@ impl MediaAgent {
     /// The decode outcome covers only `tested_ranges`; it is never whole-file
     /// certification. Unknown identities (failed opens) use the reserved zero ID.
     pub async fn inspect(&self, path: &Path, decode: bool) -> Result<MediaEvidence, MediaError> {
-        self.inspect_with(path, decode, |path, roots, hops| {
-            secure_open(&path, &roots, hops)
-        })
+        Ok(self.inspect_report(path, decode).await?.evidence)
+    }
+
+    pub(crate) async fn inspect_report(
+        &self,
+        path: &Path,
+        decode: bool,
+    ) -> Result<MediaInspection, MediaError> {
+        self.inspect_using(
+            path,
+            decode,
+            |path, roots, hops| secure_open(&path, &roots, hops),
+            Arc::new(FileRangeReader),
+        )
         .await
     }
 
+    #[cfg(test)]
     async fn inspect_with(
         &self,
         path: &Path,
         decode: bool,
         open: impl FnOnce(PathBuf, Vec<PathBuf>, usize) -> Result<Opened, MediaError> + Send + 'static,
     ) -> Result<MediaEvidence, MediaError> {
+        Ok(self
+            .inspect_using(path, decode, open, Arc::new(FileRangeReader))
+            .await?
+            .evidence)
+    }
+
+    async fn inspect_using<R: RangeReader>(
+        &self,
+        path: &Path,
+        decode: bool,
+        open: impl FnOnce(PathBuf, Vec<PathBuf>, usize) -> Result<Opened, MediaError> + Send + 'static,
+        reader: Arc<R>,
+    ) -> Result<MediaInspection, MediaError> {
         let _request = self
             .requests
             .clone()
@@ -245,7 +294,7 @@ impl MediaAgent {
             ..opened.symlinks
         });
         let (Some(file), Some(stamp)) = (opened.file, opened.stamp) else {
-            return Ok(evidence);
+            return Ok(evidence.into());
         };
         evidence.file = stamp.identity();
         let size = stamp.len;
@@ -263,33 +312,31 @@ impl MediaAgent {
         // Configured samples beyond this exact file's EOF carry no throughput
         // information. A short healthy file must not become a slow-read fault.
         offsets.retain(|offset| *offset < size);
-        let timeout_ms = millis(self.config.read_timeout);
         for offset in offsets {
-            let file = Arc::clone(&file);
-            let count = self.config.read_bytes;
-            let start = Instant::now();
             let read = self
-                .workers
-                .run(self.config.read_timeout, move || {
-                    timed_read(&file, offset, count)
-                })
+                .read_range(
+                    Arc::clone(&reader),
+                    Arc::clone(&file),
+                    offset,
+                    self.config.read_bytes,
+                    false,
+                )
                 .await?;
-            let elapsed = start.elapsed();
-            let mut read = read.unwrap_or(TimedRead {
-                offset_bytes: offset,
-                requested_bytes: count as u64,
-                read_bytes: 0,
-                first_byte_ms: None,
-                elapsed_ms: millis(elapsed),
-                timeout_ms,
-                bytes_per_second: 0,
-                outcome: ProbeOutcome::TimedOut,
-            });
-            read.timeout_ms = timeout_ms;
             let passed = read.outcome == ProbeOutcome::Passed;
-            evidence.reads.push(read);
+            evidence.reads.push(read.clone());
             if !passed {
-                return Ok(evidence);
+                let mut inspection = MediaInspection::from(evidence);
+                if self.config.read_timeout_policy.enabled && read.outcome == ProbeOutcome::TimedOut
+                {
+                    let confirmation = self
+                        .confirm_read_timeout(Arc::clone(&file), size, read, reader)
+                        .await;
+                    if confirmation.confirmed() {
+                        self.verify_unchanged(path, file, stamp).await?;
+                    }
+                    inspection.read_timeout_confirmation = Some(confirmation);
+                }
+                return Ok(inspection);
             }
         }
         let mut header = self.probe(Arc::clone(&file), None).await?;
@@ -308,9 +355,19 @@ impl MediaAgent {
         if decode && header_ok {
             evidence.decode = Some(self.decode(Arc::clone(&file), duration_ms).await?);
         }
-        let final_file = Arc::clone(&file);
+        self.verify_unchanged(path, file, stamp).await?;
+        Ok(evidence.into())
+    }
+
+    async fn verify_unchanged(
+        &self,
+        path: &Path,
+        final_file: Arc<File>,
+        stamp: Stamp,
+    ) -> Result<(), MediaError> {
         let roots = self.storage_roots().to_vec();
         let logical_path = path.to_path_buf();
+        let hops = self.config.symlink_hop_limit;
         let unchanged = self
             .workers
             .run(self.config.filesystem_timeout, move || {
@@ -325,7 +382,7 @@ impl MediaAgent {
         if unchanged != Some(true) {
             return Err(MediaError::Changed);
         }
-        Ok(evidence)
+        Ok(())
     }
 
     fn storage_roots(&self) -> &[PathBuf] {
@@ -1001,3 +1058,7 @@ fn dynamic_range(stream: &Value) -> Option<&'static str> {
 #[cfg(test)]
 #[path = "media_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "read_timeout_tests.rs"]
+mod read_timeout_tests;

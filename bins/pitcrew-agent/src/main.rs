@@ -52,6 +52,7 @@ async fn run() -> Result<(), String> {
                 .min(agent.checks.mount_timeout_ms),
         ),
         read_timeout: Duration::from_millis(agent.checks.read_timeout_ms),
+        read_timeout_policy: agent.checks.read_timeout_policy,
         header_timeout: Duration::from_secs(agent.checks.header_timeout_seconds),
         process_timeout: Duration::from_secs(server.decode_timeout_seconds),
         symlink_hop_limit: agent.checks.symlink_hop_limit as usize,

@@ -89,6 +89,12 @@ reply_writer = "templates"
 # slow_bytes_per_second = 1048576
 # header_timeout_seconds = 180
 # Thresholds are installation-specific evidence, not a universal verdict.
+# [agent.checks.read_timeout_policy]
+# enabled = false # default: a read timeout stays unknown
+# attempts = 3 # 2–5 total attempts on the exact same byte range
+# control_timeout_ms = 1000 # 1–5000, and less than read_timeout_ms when enabled
+# Every timeout requires a prompt uncached control on the same pinned file.
+# Unsupported direct I/O, slow controls and exhausted workers stay unknown.
 # [agent.server]
 # listen = "127.0.0.1:8790" # loopback only; remote access requires TLS ingress
 # compatibility = false # legacy aliases still REQUIRE Bearer auth
@@ -227,3 +233,21 @@ viewer_hour = 3
 viewer_day = 10
 per_job = 2
 item_cooldown_seconds = 21600
+
+# Optional runtime model scheduling. Default is rules for every diagnosis kind.
+[models]
+enabled = false
+
+# A route matches the deterministic diagnosis kind. Other kinds keep rules.
+# [[models.routes]]
+# kind = "broken"
+# provider = "local" # rules | local | cloud | jev | anthropic
+# profile = "local"  # required only for local/cloud OpenAI-compatible profiles
+# timeout_seconds = 30 # 1–120; any failure falls back to rules
+# Selected profiles/native providers must have shadow = false; cloud needs consent.
+# Optional rates are administrator estimates, in microusd per million tokens.
+# [models.routes.cost_rates]
+# input_microusd_per_million = 0
+# output_microusd_per_million = 0
+# cache_creation_microusd_per_million = 0
+# cache_read_microusd_per_million = 0

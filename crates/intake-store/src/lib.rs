@@ -1,6 +1,7 @@
 //! Local intake journal and browser/channel identity proofs. A proof is never a
 //! library grant: callers must obtain fresh access before accepting a report.
 pub mod diagnoses;
+pub mod model_attempts;
 pub mod progress;
 pub mod routes;
 
