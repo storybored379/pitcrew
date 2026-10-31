@@ -209,4 +209,21 @@ async fn shared_config_cli_rejects_missing_paths_and_unknown_check_flags() {
                 .contains("usage: pitcrew-bot --config FILE [--check]")
         );
     }
+    // A bare --config FILE is the normal run form: it reads the file first.
+    let output = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        tokio::process::Command::new(env!("CARGO_BIN_EXE_pitcrew-bot"))
+            .current_dir(temp.path())
+            .args(["--config", "missing.toml"])
+            .kill_on_drop(true)
+            .output(),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert!(!output.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr).trim(),
+        "could not read stack config"
+    );
 }
