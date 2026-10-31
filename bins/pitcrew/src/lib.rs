@@ -294,6 +294,17 @@ impl App {
     }
     /// Restart-safe projection. Repeated scanning is harmless: report keys derive
     /// from durable source row IDs, never from wall-clock arrival order.
+    /// Projects every stored observation, one bounded batch at a time.
+    pub async fn project_all(&self) -> Result<(), &'static str> {
+        let mut cursor = 0;
+        loop {
+            let next = self.project(cursor).await?;
+            if next == cursor {
+                return Ok(());
+            }
+            cursor = next;
+        }
+    }
     pub async fn project(&self, after: u64) -> Result<u64, &'static str> {
         let attribution = attribution::Index::load(&self.store).await?;
         let records = self

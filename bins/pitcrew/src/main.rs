@@ -217,14 +217,7 @@ async fn run() -> Result<(), String> {
     };
     let app = Arc::new(app);
     if let Some(path) = export {
-        let mut cursor = 0;
-        loop {
-            let next = app.project(cursor).await?;
-            if next == cursor {
-                break;
-            }
-            cursor = next;
-        }
+        app.project_all().await?;
         let reports = app.reports().await?;
         let mut output = private_file(Path::new(path)).map_err(|_| "report file unavailable")?;
         for report in &reports {

@@ -214,3 +214,39 @@ async fn history_stops_complete_at_rows_an_earlier_poll_stored() {
     .unwrap();
     assert_eq!(app.store.observations().await.unwrap().len(), 3);
 }
+#[tokio::test]
+async fn export_projection_covers_journals_longer_than_one_batch() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = app(&dir).await;
+    poll_with(
+        &app,
+        vec![
+            ("/api/v3/history", page(1, vec![history(1, "grabbed")])),
+            ("/api/v3/queue", page(0, vec![])),
+        ],
+    )
+    .await
+    .unwrap();
+    let stored = app.store.observations_after(0, 10).await.unwrap();
+    let row = stored
+        .iter()
+        .find(|r| r.source.starts_with("history:"))
+        .expect("poll stored a history row");
+    // One more than a projection batch (1,000 rows).
+    for i in 0..1000 {
+        app.store
+            .ingest_observation(&row.source, &format!("copy-{i}"), &row.payload, row.at)
+            .await
+            .unwrap();
+    }
+    let journaled = || async {
+        let rows = app.store.comparison_inputs().await.unwrap();
+        rows.iter().filter(|r| r.source == "diff").count()
+    };
+    app.project_all().await.unwrap();
+    assert_eq!(journaled().await, 1001);
+    // Already projected: a second pass adds nothing.
+    app.project_all().await.unwrap();
+    assert_eq!(journaled().await, 1001);
+    assert_eq!(app.reports().await.unwrap().len(), 1001);
+}
