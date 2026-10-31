@@ -58,3 +58,8 @@ CREATE TABLE IF NOT EXISTS bridge_dispatch_cursor (
     id INTEGER PRIMARY KEY CHECK(id=1), last_key TEXT NOT NULL
 );
 INSERT OR IGNORE INTO bridge_dispatch_cursor VALUES (1,'');
+-- Trusted read-side release evidence, never accepted from the admin command.
+CREATE TABLE IF NOT EXISTS bridge_lower_quality (
+    job_id INTEGER PRIMARY KEY,
+    evidence TEXT NOT NULL
+);

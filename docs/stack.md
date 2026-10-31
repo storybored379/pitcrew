@@ -192,6 +192,14 @@ start in any order: until the journal exists, the controller logs
 Owner commands are consumed after report evidence refresh and before new bridge
 jobs are created. Unsupported lower-quality execution is audited as deferred.
 
+The exact quality JSON match above describes the default same-quality path.
+An explicit `[lower_quality]` resolution floor, together with release-search opt-in,
+also enables a bounded strict-resolution downgrade proposal and shadow approval of
+its upgrade-guard intent. Live lower-quality execution remains refused pending a
+certified guard transport and verification that the actual decoded media meets the
+floor. See [lower-quality approval requirements](admin.md) for the current checks
+and configuration.
+
 ## State, backup and shutdown
 
 Keep SQLite databases and their WAL/SHM files on local persistent storage, not an

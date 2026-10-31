@@ -14,6 +14,7 @@ mod stack;
 pub use stack::{Stack, StackCatalogItem, StackResolution};
 pub mod admin;
 pub mod live;
+pub mod lower_quality;
 pub mod runtime;
 
 #[derive(Debug, Deserialize)]
@@ -27,6 +28,8 @@ pub struct Config {
     pub runtime: runtime::Runtime,
     #[serde(default)]
     pub live: live::Live,
+    #[serde(default)]
+    pub lower_quality: lower_quality::LowerQuality,
     #[serde(default)]
     pub engine: Engine,
     #[serde(default = "default_database")]

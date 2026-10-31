@@ -74,6 +74,7 @@ pub struct Runtime<T> {
     report_cursor: i64,
     job_cursor: u64,
     search_enabled: bool,
+    lower_quality_minimum: Option<u32>,
     authorities: BTreeMap<(String, String), Prepared>,
 }
 
@@ -273,6 +274,10 @@ impl<T: Transport> Runtime<T> {
             report_cursor: 0,
             job_cursor: 0,
             search_enabled: config.runtime.search_enabled,
+            lower_quality_minimum: config
+                .lower_quality
+                .minimum_resolution
+                .map(|value| value.get()),
             authorities: BTreeMap::new(),
         }))
     }
@@ -287,6 +292,9 @@ impl<T: Transport> Runtime<T> {
     ) -> Result<Tick, &'static str> {
         let mut summary = self.reports().await?;
         if let Some(consumer) = consumer {
+            // Refresh the exact pending release after current access/file evidence
+            // and before consuming an owner approval. Refresh failure revokes it.
+            self.refresh_lower_quality().await?;
             consumer
                 .tick(self.now_seconds())
                 .await

@@ -16,6 +16,7 @@ use std::sync::Mutex;
 struct Fake {
     replies: Arc<Mutex<BTreeMap<String, Value>>>,
     calls: Arc<Mutex<Vec<String>>>,
+    failure: Arc<Mutex<Option<pitcrew_upstream::Error>>>,
 }
 impl Fake {
     fn reply(&self, path: &str, value: Value) {
@@ -28,6 +29,9 @@ impl Transport for Fake {
         assert!(request.body.is_none());
         let path = request.url.path().to_owned();
         self.calls.lock().unwrap().push(path.clone());
+        if let Some(error) = *self.failure.lock().unwrap() {
+            return Box::pin(async move { Err(error) });
+        }
         let body = serde_json::to_vec(
             self.replies
                 .lock()
@@ -631,6 +635,294 @@ fn catalog_export_replaces_a_relative_basename_with_private_valid_json() {
                 .mode()
                 & 0o777,
             0o600
+        );
+    }
+}
+
+#[tokio::test]
+async fn release_size_requires_seventy_mib_for_same_and_bounded_lower_quality() {
+    for lower_quality in [false, true] {
+        for (case, size, accepted) in [
+            ("missing", None, false),
+            ("null", Some(Value::Null), false),
+            ("zero", Some(json!(0)), false),
+            ("small", Some(json!(1_048_576)), false),
+            ("below_floor", Some(json!(73_400_319)), false),
+            ("at_floor", Some(json!(73_400_320)), true),
+        ] {
+            let mut f = Fixture::new("radarr").await;
+            f.runtime.lower_quality_minimum = Some(1080);
+            let mut original = file();
+            original["quality"]["quality"]["resolution"] = json!(2160);
+            f.fake.reply(f.file_path, original.clone());
+            let lease = f.job().await;
+            let stored = f.runtime.store.load_job(1).await.unwrap();
+            let before = f
+                .runtime
+                .store
+                .apply_event(
+                    &lease,
+                    stored.revision,
+                    "broken",
+                    Event::BrokenFileConfirmed {
+                        file: stored.job.current_original(),
+                    },
+                    100,
+                )
+                .await
+                .unwrap()
+                .stored;
+            let mut release = candidate("size-boundary");
+            release["quality"] = original["quality"].clone();
+            if lower_quality {
+                release["quality"]["quality"]["resolution"] = json!(1080);
+            }
+            match size {
+                Some(size) => release["size"] = size,
+                None => {
+                    release.as_object_mut().unwrap().remove("size");
+                }
+            }
+            f.fake.reply("/api/v3/release", json!([release]));
+            f.runtime.select(&lease).await.unwrap();
+            let after = f.runtime.store.load_job(1).await.unwrap();
+            let outbox = f.runtime.store.outbox(1).await.unwrap();
+            if !accepted {
+                assert_eq!(after, before, "{case}, lower_quality={lower_quality}");
+                assert!(outbox.is_empty());
+            } else if lower_quality {
+                assert_eq!(after.job.state(), State::AwaitingQualityApproval);
+                assert_eq!(after.job.reserved_budget(), 0);
+                assert!(outbox.is_empty());
+                let (_, bound) = after.job.bounded_lower_quality().unwrap();
+                assert_eq!(bound.minimum_resolution, 1080);
+                assert_eq!(bound.candidate_resolution, 1080);
+                assert_eq!(bound.original_resolution, 2160);
+            } else {
+                assert_eq!(after.job.state(), State::GrabIntent);
+                assert_eq!(after.job.reserved_budget(), 1);
+                assert_eq!(outbox.len(), 1);
+                assert!(matches!(outbox[0].intent.effect, Effect::Grab { .. }));
+            }
+            let pool = sqlx::SqlitePool::connect_with(
+                sqlx::sqlite::SqliteConnectOptions::new()
+                    .filename(f._dir.path().join("intake.sqlite")),
+            )
+            .await
+            .unwrap();
+            let proofs: i64 = sqlx::query_scalar("SELECT count(*) FROM bridge_lower_quality")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+            assert_eq!(
+                proofs,
+                i64::from(accepted && lower_quality),
+                "{case}, lower_quality={lower_quality}"
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn lower_quality_selection_requires_explicit_floor_and_structured_resolution() {
+    for (minimum, source, replacement, expected) in [
+        (None, json!(2160), json!(1080), false),
+        (Some(1080), json!(2160), json!(1080), true),
+        (Some(720), json!(2160), json!(1080), true),
+        (Some(1080), json!(2160), json!(720), false),
+        (Some(720), json!(1080), json!(1080), false),
+        (Some(720), json!(1080), json!(2160), false),
+        (Some(720), json!(null), json!(1080), false),
+        (Some(720), json!(2160), json!(null), false),
+        (Some(720), json!(2160), json!("1080"), false),
+        (Some(720), json!(2160), json!(0), false),
+        (Some(720), json!(2160), json!(u64::MAX), false),
+    ] {
+        let mut f = Fixture::new("radarr").await;
+        f.runtime.lower_quality_minimum = minimum;
+        let mut original = file();
+        original["quality"]["quality"]["resolution"] = source;
+        f.fake.reply(f.file_path, original);
+        let lease = f.job().await;
+        let stored = f.runtime.store.load_job(1).await.unwrap();
+        f.runtime
+            .store
+            .apply_event(
+                &lease,
+                stored.revision,
+                "broken",
+                Event::BrokenFileConfirmed {
+                    file: stored.job.current_original(),
+                },
+                100,
+            )
+            .await
+            .unwrap();
+        let mut lower = candidate("lower");
+        lower["quality"]["quality"]["id"] = json!(1);
+        lower["quality"]["quality"]["resolution"] = replacement;
+        f.fake.reply("/api/v3/release", json!([lower]));
+        f.runtime.select(&lease).await.unwrap();
+        let job = f.runtime.store.load_job(1).await.unwrap().job;
+        assert_eq!(job.state() == State::AwaitingQualityApproval, expected);
+        if expected {
+            let (_, bound) = job.bounded_lower_quality().unwrap();
+            assert_eq!(bound.minimum_resolution, minimum.unwrap());
+            assert_eq!(bound.candidate_resolution, 1080);
+            assert_eq!(bound.original_resolution, 2160);
+        }
+        assert_eq!(job.reserved_budget(), 0);
+        assert!(f.runtime.store.outbox(1).await.unwrap().is_empty());
+    }
+}
+
+#[tokio::test]
+async fn lower_quality_search_prefers_equal_quality_and_refreshes_only_the_pending_release() {
+    for same_available in [true, false] {
+        let mut f = Fixture::new("sonarr").await;
+        f.runtime.lower_quality_minimum = Some(1080);
+        let mut original = file();
+        original["quality"]["quality"]["resolution"] = json!(2160);
+        f.fake.reply(f.file_path, original.clone());
+        let lease = f.job().await;
+        let stored = f.runtime.store.load_job(1).await.unwrap();
+        f.runtime
+            .store
+            .apply_event(
+                &lease,
+                stored.revision,
+                "broken",
+                Event::BrokenFileConfirmed {
+                    file: stored.job.current_original(),
+                },
+                100,
+            )
+            .await
+            .unwrap();
+        let mut lower = candidate("lower");
+        lower["quality"]["quality"]["resolution"] = json!(1080);
+        let mut same = candidate("same");
+        same["quality"] = original["quality"].clone();
+        f.fake.reply(
+            "/api/v3/release",
+            if same_available {
+                json!([lower, same])
+            } else {
+                json!([lower.clone()])
+            },
+        );
+        f.runtime.select(&lease).await.unwrap();
+        let pending = f.runtime.store.load_job(1).await.unwrap();
+        if same_available {
+            assert_eq!(pending.job.state(), State::GrabIntent);
+            continue;
+        }
+        assert_eq!(pending.job.state(), State::AwaitingQualityApproval);
+        f.runtime.store.release_lease(&lease, 100).await.unwrap();
+        let pool = sqlx::SqlitePool::connect_with(
+            sqlx::sqlite::SqliteConnectOptions::new().filename(f._dir.path().join("intake.sqlite")),
+        )
+        .await
+        .unwrap();
+        for refresh in [
+            "same",
+            "other",
+            "none",
+            "size_missing",
+            "size_below_floor",
+            "disabled",
+            "floor_changed",
+            "malformed",
+            "timeout",
+            "transport",
+            "busy",
+            "revoked",
+        ] {
+            // Every refusal starts with a usable proof. An empty table from the
+            // preceding refusal cannot make invalidation look successful.
+            *f.fake.failure.lock().unwrap() = None;
+            lower["guid"] = json!("lower");
+            lower["size"] = json!(100_000_000);
+            f.fake.reply("/api/v3/release", json!([lower.clone()]));
+            f.runtime.search_enabled = true;
+            f.runtime.lower_quality_minimum = Some(1080);
+            f.runtime.authorities.values_mut().next().unwrap().access = access();
+            f.runtime.refresh_lower_quality().await.unwrap();
+            let seeded: i64 = sqlx::query_scalar("SELECT count(*) FROM bridge_lower_quality")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+            assert_eq!(seeded, 1, "{refresh}");
+            let busy = if refresh == "busy" {
+                Some(
+                    f.runtime
+                        .store
+                        .acquire_lease(1, "another-worker", 100, 60)
+                        .await
+                        .unwrap(),
+                )
+            } else {
+                None
+            };
+            if refresh == "revoked" {
+                f.runtime.authorities.values_mut().next().unwrap().access = Access::Denied;
+            }
+            lower["guid"] = json!(if refresh == "other" { "other" } else { "lower" });
+            if refresh == "size_missing" {
+                lower.as_object_mut().unwrap().remove("size");
+            } else if refresh == "size_below_floor" {
+                lower["size"] = json!(73_400_319);
+            }
+            f.fake.reply(
+                "/api/v3/release",
+                if refresh == "none" {
+                    json!([])
+                } else if refresh == "malformed" {
+                    json!({"unsupported":true})
+                } else {
+                    json!([lower.clone()])
+                },
+            );
+            f.runtime.search_enabled = refresh != "disabled";
+            f.runtime.lower_quality_minimum = Some(if refresh == "floor_changed" {
+                720
+            } else {
+                1080
+            });
+            *f.fake.failure.lock().unwrap() = match refresh {
+                "timeout" => Some(pitcrew_upstream::Error::Timeout),
+                "transport" => Some(pitcrew_upstream::Error::Transport),
+                _ => None,
+            };
+            f.runtime.refresh_lower_quality().await.unwrap();
+            if let Some(busy) = busy {
+                f.runtime.store.release_lease(&busy, 100).await.unwrap();
+            }
+            let count: i64 = sqlx::query_scalar("SELECT count(*) FROM bridge_lower_quality")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+            assert_eq!(count, i64::from(refresh == "same"), "{refresh}");
+            assert_eq!(f.runtime.store.load_job(1).await.unwrap(), pending);
+        }
+        f.runtime.search_enabled = true;
+        f.runtime.lower_quality_minimum = Some(1080);
+        f.runtime.authorities.values_mut().next().unwrap().access = access();
+        f.runtime.refresh_lower_quality().await.unwrap();
+        let count: i64 = sqlx::query_scalar("SELECT count(*) FROM bridge_lower_quality")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count, 1);
+        f.runtime.authorities.clear();
+        f.runtime.refresh_lower_quality().await.unwrap();
+        let count: i64 = sqlx::query_scalar("SELECT count(*) FROM bridge_lower_quality")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            count, 0,
+            "a batch without current authority must revoke old proof"
         );
     }
 }

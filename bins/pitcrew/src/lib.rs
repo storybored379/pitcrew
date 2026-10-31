@@ -1,5 +1,6 @@
 //! Shadow service boundary: bounded local intake, journal replay and report export.
 pub mod admin;
+pub mod attribution;
 pub mod doctor;
 pub mod live;
 pub mod live_delivery;
@@ -13,7 +14,7 @@ use pitcrew_domain::{Event, Intent};
 use pitcrew_engine::{
     CallError, CallFuture, Options, Upstream, Worker,
     observer::{self, Action, Activity, Actor, Diff, Safety},
-    webhook::{ArrObservation, Intake, IntakeError, Kind, MAX_BODY, Secret},
+    webhook::{Intake, IntakeError, MAX_BODY, Secret},
 };
 use pitcrew_store::{BudgetLimits, NewJob, Store};
 use serde::{Deserialize, Serialize};
@@ -294,6 +295,7 @@ impl App {
     /// Restart-safe projection. Repeated scanning is harmless: report keys derive
     /// from durable source row IDs, never from wall-clock arrival order.
     pub async fn project(&self, after: u64) -> Result<u64, &'static str> {
+        let attribution = attribution::Index::load(&self.store).await?;
         let records = self
             .store
             .observations_after(after, 1000)
@@ -326,72 +328,54 @@ impl App {
                     .map_err(|_| "report_storage")?;
                 continue;
             }
-            let instance = record
-                .source
-                .strip_prefix("webhook:")
-                .or_else(|| record.source.strip_prefix("history:"));
-            if let Some(instance) = instance {
-                let observation: ArrObservation = serde_json::from_value(record.payload)
-                    .map_err(|_| "invalid_stored_observation")?;
-                let action = match observation.kind {
-                    Kind::Grab => Action::Grab,
-                    Kind::Download => Action::Import,
-                    Kind::EpisodeFileDelete | Kind::MovieFileDelete => Action::DeleteLibrary,
-                    _ => Action::Hold,
-                };
-                // Upstream status does not establish the missing
-                // access/decode/job facts. Never infer them from arrival order.
-                let observed = Activity {
-                    action,
-                    actor: Actor::Unknown,
-                    correlated: false,
-                    safety: Safety::default(),
-                };
-                let proposed = Activity {
-                    action: Action::Hold,
-                    actor: Actor::Engine,
-                    correlated: false,
-                    safety: Safety::default(),
-                };
-                let fix = format!(
-                    "{instance}:{}",
-                    observation.download.as_deref().unwrap_or("uncorrelated")
-                );
-                let report = observer::compare(fix, observed, proposed);
-                self.store
-                    .ingest_observation(
-                        "diff",
-                        &format!("observation:{}", record.id),
-                        &serde_json::to_value(report).map_err(|_| "report_encoding")?,
-                        record.at,
-                    )
+            if let Some(report) = attribution.arr(&record)? {
+                let key = format!("observation:{}", record.id);
+                // The journal preserves the first projection. Export re-joins
+                // raw observations with current trusted receipts, so late logs
+                // and conflicts cannot leave a stale actor in the comparison.
+                if self
+                    .store
+                    .observation("diff", &key)
                     .await
-                    .map_err(|_| "report_storage")?;
+                    .map_err(|_| "store_unavailable")?
+                    .is_none()
+                {
+                    self.store
+                        .ingest_observation(
+                            "diff",
+                            &key,
+                            &serde_json::to_value(report).map_err(|_| "report_encoding")?,
+                            record.at,
+                        )
+                        .await
+                        .map_err(|_| "report_storage")?;
+                }
             }
         }
         Ok(cursor)
     }
     pub async fn reports(&self) -> Result<Vec<Diff>, &'static str> {
-        let mut cursor = 0;
-        let mut result = vec![];
-        loop {
-            let records = self
-                .store
-                .observations_after(cursor, 1000)
-                .await
-                .map_err(|_| "store_unavailable")?;
-            if records.is_empty() {
-                break;
-            }
-            for record in records {
-                cursor = record.id;
-                if record.source == "diff" {
-                    result.push(
-                        serde_json::from_value(record.payload).map_err(|_| "invalid_report")?,
-                    );
-                }
+        let records = self
+            .store
+            .comparison_inputs()
+            .await
+            .map_err(|_| "store_unavailable")?;
+        let attribution = attribution::Index::load(&self.store).await?;
+        let mut current = BTreeMap::new();
+        for record in &records {
+            if let Some(report) = attribution.arr(record)? {
+                current.insert(report.fix.clone(), report);
             }
         }
+        let mut result = vec![];
+        for record in &records {
+            if record.source == "diff" && !current.contains_key(&record.key) {
+                result.push(
+                    serde_json::from_value(record.payload.clone()).map_err(|_| "invalid_report")?,
+                );
+            }
+        }
+        result.extend(current.into_values());
         Ok(result)
     }
 }

@@ -628,6 +628,20 @@ async fn unsupported_lower_quality_approval_is_explicitly_deferred_without_effec
     assert_eq!(request_state(&pool, "stale").await, "controller_rejected");
     assert_eq!(f.engine.load_job(job).await.unwrap(), pending);
     assert!(f.engine.outbox(job).await.unwrap().is_empty());
+    let consumer = consumer.with_lower_quality_shadow(Some(720));
+    admin_request(
+        &pool,
+        "legacy-shadow",
+        "owner-a",
+        serde_json::json!({"action":"lower_quality","job":job,"revision":pending.revision}),
+    )
+    .await;
+    assert_eq!(consumer.tick(13).await.unwrap(), 1);
+    assert_eq!(
+        request_state(&pool, "legacy-shadow").await,
+        "controller_deferred"
+    );
+    assert_eq!(f.engine.load_job(job).await.unwrap(), pending);
 }
 
 #[tokio::test]
@@ -1480,4 +1494,612 @@ async fn registry_aba_revision_never_dedupes_to_an_old_terminal_repair() {
         )
         .await
         .unwrap();
+}
+
+async fn bounded_pending(f: &Fixture) -> (Diagnosis, u64, lower_quality::ReleaseEvidence) {
+    bounded_pending_at(f, 10).await
+}
+
+async fn bounded_pending_at(
+    f: &Fixture,
+    created_at: u64,
+) -> (Diagnosis, u64, lower_quality::ReleaseEvidence) {
+    use pitcrew_domain::{LowerQualityBound, QualityRelation, ReleaseCandidate};
+    let mut d = f.report("viewer-a", "bounded").await;
+    d.decided_at = created_at;
+    f.register(&d, created_at).await;
+    let mut auth = authority(&d, "viewer-a");
+    auth.observed_at = created_at;
+    auth.access = Access::Granted {
+        library: 1,
+        expires_at: created_at + 990,
+    };
+    f.bridge.record_authority(d.report_id, &auth).await.unwrap();
+    let job = f
+        .bridge
+        .consume(&d, created_at)
+        .await
+        .unwrap()
+        .job_id
+        .unwrap();
+    let stored = f.engine.load_job(job).await.unwrap();
+    let lease = f
+        .engine
+        .acquire_lease(job, "test", created_at + 1, 30)
+        .await
+        .unwrap();
+    let candidate = ReleaseCandidate {
+        release: 7,
+        identity: Default::default(),
+        quality: QualityRelation::Lower,
+    };
+    let bound = LowerQualityBound {
+        minimum_resolution: 720,
+        candidate_resolution: 1080,
+        original_resolution: 2160,
+    };
+    let pending = f
+        .engine
+        .apply_event(
+            &lease,
+            stored.revision,
+            "bounded",
+            Event::RequestBoundedLowerQuality {
+                candidate: candidate.clone(),
+                bound,
+                access: auth.access,
+            },
+            created_at + 1,
+        )
+        .await
+        .unwrap()
+        .stored;
+    f.engine
+        .release_lease(&lease, created_at + 1)
+        .await
+        .unwrap();
+    let evidence = lower_quality::ReleaseEvidence {
+        revision: pending.revision,
+        arr_instance_id: d.arr_instance_id.clone(),
+        arr_item_id: d.arr_item_id,
+        original: pending.job.current_original(),
+        candidate,
+        bound,
+        observed_at: created_at + 1,
+    };
+    f.bridge.record_lower_quality(job, &evidence).await.unwrap();
+    (d, job, evidence)
+}
+
+#[tokio::test]
+async fn bounded_shadow_approval_records_guard_once_and_shadow_dispatch_calls_no_transport() {
+    struct NoTransport;
+    impl pitcrew_engine::Upstream for NoTransport {
+        fn read<'a>(&'a self, _: &'a pitcrew_domain::Intent) -> pitcrew_engine::CallFuture<'a> {
+            panic!("shadow read")
+        }
+        fn write<'a>(&'a self, _: &'a pitcrew_domain::Intent) -> pitcrew_engine::CallFuture<'a> {
+            panic!("shadow write")
+        }
+    }
+    let f = Fixture::new().await;
+    let (_, job, evidence) = bounded_pending(&f).await;
+    let (consumer, pool) = f.consumer().await;
+    let consumer = consumer.with_lower_quality_shadow(Some(720));
+    admin_request(
+        &pool,
+        "bounded",
+        "owner-a",
+        serde_json::json!({"action":"lower_quality","job":job,"revision":evidence.revision}),
+    )
+    .await;
+    assert_eq!(consumer.tick(12).await.unwrap(), 1);
+    assert_eq!(request_state(&pool, "bounded").await, "controller_applied");
+    let stored = f.engine.load_job(job).await.unwrap();
+    assert_eq!(
+        stored.job.state(),
+        pitcrew_domain::State::UpgradeGuardIntent
+    );
+    assert_eq!(stored.job.reserved_budget(), 0);
+    assert_eq!(
+        stored.job.bounded_lower_quality(),
+        Some((&evidence.candidate, evidence.bound))
+    );
+    let restarted = Store::open(f._temp.path().join("engine.sqlite"))
+        .await
+        .unwrap();
+    assert_eq!(restarted.load_job(job).await.unwrap(), stored);
+    let outbox = f.engine.outbox(job).await.unwrap();
+    assert_eq!(restarted.outbox(job).await.unwrap(), outbox);
+    assert_eq!(outbox.len(), 1);
+    assert!(matches!(
+        outbox[0].intent.effect,
+        pitcrew_domain::Effect::InstallUpgradeGuard { .. }
+    ));
+    assert_eq!(consumer.tick(13).await.unwrap(), 0);
+    let worker =
+        pitcrew_engine::Worker::new(Some(restarted), NoTransport, Default::default()).unwrap();
+    let lease = f.engine.acquire_lease(job, "shadow", 13, 60).await.unwrap();
+    assert_eq!(worker.drive(&lease, 13).await.unwrap(), 1);
+    assert_eq!(
+        f.engine.outbox(job).await.unwrap()[0].status,
+        pitcrew_store::OutboxStatus::Shadowed
+    );
+    assert_eq!(
+        f.engine.load_job(job).await.unwrap().job.state(),
+        pitcrew_domain::State::UpgradeGuardIntent
+    );
+}
+
+#[tokio::test]
+async fn bounded_approval_revalidates_every_authority_and_release_component() {
+    for case in [
+        "missing",
+        "revision",
+        "candidate",
+        "bound",
+        "original",
+        "instance",
+        "item",
+        "future",
+        "stale",
+        "older_than_authority",
+        "account",
+        "resource",
+        "library",
+        "authority_future",
+        "authority_stale",
+        "access_unknown",
+        "access_denied",
+        "access_expired",
+        "access_library",
+        "not_broken",
+        "file",
+        "arr_file",
+        "excluded",
+        "registry_changed",
+        "registry_stale",
+        "busy",
+        "live",
+    ] {
+        let f = Fixture::new().await;
+        let (d, job, mut evidence) = bounded_pending(&f).await;
+        let before = f.engine.load_job(job).await.unwrap();
+        let mut auth = authority(&d, "viewer-a");
+        let mut now = 12;
+        match case {
+            "revision" => evidence.revision += 1,
+            "candidate" => evidence.candidate.release += 1,
+            "bound" => evidence.bound.minimum_resolution += 1,
+            "original" => evidence.original.revision += 1,
+            "instance" => evidence.arr_instance_id = "other".into(),
+            "item" => evidence.arr_item_id += 1,
+            "future" => evidence.observed_at = 13,
+            "stale" => {
+                now = 312;
+                auth.observed_at = 312;
+            }
+            "older_than_authority" => auth.observed_at = 12,
+            "account" => auth.account = "other".into(),
+            "resource" => auth.resource = "other".into(),
+            "library" => auth.library += 1,
+            "authority_future" => auth.observed_at = 13,
+            "authority_stale" => {
+                now = 311;
+                evidence.observed_at = 311;
+            }
+            "access_unknown" => auth.access = Access::Unknown,
+            "access_denied" => auth.access = Access::Denied,
+            "access_expired" => {
+                auth.access = Access::Granted {
+                    library: 1,
+                    expires_at: 12,
+                }
+            }
+            "access_library" => {
+                auth.access = Access::Granted {
+                    library: 2,
+                    expires_at: 1000,
+                }
+            }
+            "not_broken" => {
+                auth.decode = DecodeOutcome::Good;
+                auth.probe = ProbeOutcome::Video;
+            }
+            "file" => auth.file.revision += 1,
+            "arr_file" => auth.arr_file_id += 1,
+            "excluded" => {
+                f.engine
+                    .exclude_release(
+                        &pitcrew_store::policy::NewExclusion {
+                            client: d.arr_instance_id.clone(),
+                            release: 7,
+                            identity: Default::default(),
+                            kind: pitcrew_store::policy::ExclusionKind::DeadRelease,
+                            reason: "Synthetic failure".into(),
+                            evidence: serde_json::json!({}),
+                            pinned: false,
+                            created_at: 11,
+                        },
+                        "excluded",
+                    )
+                    .await
+                    .unwrap();
+            }
+            "registry_changed" => {
+                let mut changed = fingerprint(&d);
+                changed.size += 1;
+                f.engine
+                    .register_file(&d.arr_instance_id, &d.resource, &changed, 11)
+                    .await
+                    .unwrap();
+            }
+            "registry_stale" => {
+                now = 311;
+                auth.observed_at = 311;
+                evidence.observed_at = 311;
+            }
+            "busy" => {
+                f.engine.acquire_lease(job, "other", 12, 60).await.unwrap();
+            }
+            _ => {}
+        }
+        // Deliberately tamper only in this fixture to test that a durable row is
+        // evidence to revalidate, never an authorization bypass.
+        sqlx::query("UPDATE bridge_authority SET authority=? WHERE report_id=?")
+            .bind(serde_json::to_string(&auth).unwrap())
+            .bind(d.report_id)
+            .execute(&f.sql().await)
+            .await
+            .unwrap();
+        f.bridge.record_lower_quality(job, &evidence).await.unwrap();
+        if case == "missing" {
+            f.bridge.clear_lower_quality(job).await.unwrap();
+        }
+        let (consumer, pool) = f.consumer().await;
+        let consumer = if case == "live" {
+            consumer
+        } else {
+            consumer.with_lower_quality_shadow(Some(720))
+        };
+        admin_request(
+            &pool,
+            case,
+            "owner-a",
+            serde_json::json!({"action":"lower_quality","job":job,"revision":before.revision}),
+        )
+        .await;
+        assert_eq!(consumer.tick(now).await.unwrap(), 1, "{case}");
+        assert_eq!(
+            request_state(&pool, case).await,
+            "controller_deferred",
+            "{case}"
+        );
+        assert_eq!(f.engine.load_job(job).await.unwrap(), before, "{case}");
+        assert!(f.engine.outbox(job).await.unwrap().is_empty(), "{case}");
+    }
+}
+
+#[tokio::test]
+async fn bounded_approval_honors_reduced_budget_caps_without_spending_again() {
+    for case in [
+        "job",
+        "global_hour",
+        "global_day",
+        "viewer_hour",
+        "viewer_day",
+    ] {
+        let mut f = Fixture::new().await;
+        let (_, job, evidence) = bounded_pending(&f).await;
+        let mut opts = options();
+        match case {
+            "job" => opts.policy.max_grabs = 0,
+            "global_hour" => opts.budgets.global_hour = 1,
+            "global_day" => opts.budgets.global_day = 1,
+            "viewer_hour" => opts.budgets.viewer_hour = 1,
+            "viewer_day" => opts.budgets.viewer_day = 1,
+            _ => unreachable!(),
+        }
+        f.bridge = Bridge::open(&f.path, f.engine.clone(), opts).await.unwrap();
+        let (consumer, pool) = f.consumer().await;
+        let consumer = consumer.with_lower_quality_shadow(Some(720));
+        admin_request(
+            &pool,
+            "budget",
+            "owner-a",
+            serde_json::json!({"action":"lower_quality","job":job,"revision":evidence.revision}),
+        )
+        .await;
+        assert_eq!(consumer.tick(12).await.unwrap(), 1);
+        assert_eq!(
+            request_state(&pool, "budget").await,
+            "controller_deferred",
+            "{case}"
+        );
+        assert!(f.engine.outbox(job).await.unwrap().is_empty());
+    }
+}
+
+#[tokio::test]
+async fn lower_quality_approval_expiry_does_not_renew_saved_evidence_or_access() {
+    use pitcrew_domain::{Observation, TransitionError};
+    for access_expiry in [13, 1000] {
+        let mut f = Fixture::new().await;
+        let (d, job, evidence) = bounded_pending(&f).await;
+        let mut auth = authority(&d, "viewer-a");
+        auth.access = Access::Granted {
+            library: 1,
+            expires_at: access_expiry,
+        };
+        f.bridge.record_authority(d.report_id, &auth).await.unwrap();
+        let mut opts = options();
+        opts.evidence_max_age = 5;
+        f.bridge = Bridge::open(&f.path, f.engine.clone(), opts).await.unwrap();
+        let (consumer, pool) = f.consumer().await;
+        let consumer = consumer.with_lower_quality_shadow(Some(720));
+        admin_request(
+            &pool,
+            "expiry",
+            "owner-a",
+            serde_json::json!({"action":"lower_quality","job":job,"revision":evidence.revision}),
+        )
+        .await;
+        consumer.tick(12).await.unwrap();
+        assert_eq!(request_state(&pool, "expiry").await, "controller_applied");
+        let stored = f.engine.load_job(job).await.unwrap();
+        let guarded = stored
+            .job
+            .apply(
+                Event::Observed {
+                    intent: stored.job.expected_observation().unwrap(),
+                    observation: Observation::UpgradeGuardInstalled,
+                },
+                12,
+            )
+            .unwrap()
+            .job;
+        let expiry = access_expiry.min(15);
+        let fresh_access = Access::Granted {
+            library: 1,
+            expires_at: 1000,
+        };
+        assert!(
+            guarded
+                .apply(
+                    Event::GrabApproved {
+                        access: fresh_access
+                    },
+                    expiry - 1
+                )
+                .is_ok()
+        );
+        assert_eq!(
+            guarded.apply(
+                Event::GrabApproved {
+                    access: fresh_access
+                },
+                expiry
+            ),
+            Err(TransitionError::ApprovalRequired)
+        );
+    }
+}
+
+#[tokio::test]
+async fn lower_quality_evidence_at_its_expiry_is_deferred_without_effects() {
+    for expire_release in [true, false] {
+        let mut f = Fixture::new().await;
+        let (d, job, mut evidence) = bounded_pending(&f).await;
+        let mut opts = options();
+        opts.evidence_max_age = 2;
+        f.bridge = Bridge::open(&f.path, f.engine.clone(), opts).await.unwrap();
+        if expire_release {
+            let mut auth = authority(&d, "viewer-a");
+            auth.observed_at = 11;
+            f.bridge.record_authority(d.report_id, &auth).await.unwrap();
+            evidence.observed_at = 10;
+            f.bridge.record_lower_quality(job, &evidence).await.unwrap();
+        }
+        let (consumer, pool) = f.consumer().await;
+        let consumer = consumer.with_lower_quality_shadow(Some(720));
+        admin_request(
+            &pool,
+            "expired",
+            "owner-a",
+            serde_json::json!({"action":"lower_quality","job":job,"revision":evidence.revision}),
+        )
+        .await;
+        consumer.tick(12).await.unwrap();
+        assert_eq!(request_state(&pool, "expired").await, "controller_deferred");
+        assert!(f.engine.outbox(job).await.unwrap().is_empty());
+    }
+}
+
+#[tokio::test]
+async fn lower_quality_accepts_current_exact_open_failure_or_missing_video_evidence() {
+    for probe in [ProbeOutcome::OpenFailed, ProbeOutcome::NoVideo] {
+        let f = Fixture::new().await;
+        let (d, job, evidence) = bounded_pending(&f).await;
+        let mut auth = authority(&d, "viewer-a");
+        auth.decode = DecodeOutcome::Unknown;
+        auth.probe = probe;
+        f.bridge.record_authority(d.report_id, &auth).await.unwrap();
+        let (consumer, pool) = f.consumer().await;
+        let consumer = consumer.with_lower_quality_shadow(Some(720));
+        admin_request(
+            &pool,
+            "probe",
+            "owner-a",
+            serde_json::json!({"action":"lower_quality","job":job,"revision":evidence.revision}),
+        )
+        .await;
+        consumer.tick(12).await.unwrap();
+        assert_eq!(request_state(&pool, "probe").await, "controller_applied");
+    }
+}
+
+#[tokio::test]
+async fn lower_quality_consumer_requires_current_positive_matching_floor() {
+    for minimum in [None, Some(0), Some(1080), Some(720)] {
+        let f = Fixture::new().await;
+        let (_, job, evidence) = bounded_pending(&f).await;
+        let (consumer, pool) = f.consumer().await;
+        let consumer = consumer.with_lower_quality_shadow(minimum);
+        admin_request(
+            &pool,
+            "floor",
+            "owner-a",
+            serde_json::json!({"action":"lower_quality","job":job,"revision":evidence.revision}),
+        )
+        .await;
+        consumer.tick(12).await.unwrap();
+        assert_eq!(
+            request_state(&pool, "floor").await,
+            if minimum == Some(720) {
+                "controller_applied"
+            } else {
+                "controller_deferred"
+            },
+            "{minimum:?}"
+        );
+        let audit: String = sqlx::query_scalar(
+            "SELECT event FROM admin_audit WHERE request_key='floor' ORDER BY id DESC LIMIT 1",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            audit.contains("Lower-quality shadow approval is disabled."),
+            minimum.is_none() || minimum == Some(0),
+            "The audit must distinguish a removed opt-in from stale evidence."
+        );
+        if minimum != Some(720) {
+            assert!(f.engine.outbox(job).await.unwrap().is_empty());
+        }
+    }
+}
+
+#[tokio::test]
+async fn lower_quality_batch_revocation_discards_every_cached_proof_without_changing_job() {
+    let f = Fixture::new().await;
+    let (_, job, evidence) = bounded_pending(&f).await;
+    let before = f.engine.load_job(job).await.unwrap();
+    // A proof for a job absent from this batch must be invalidated as well.
+    f.bridge
+        .record_lower_quality(job + 1, &evidence)
+        .await
+        .unwrap();
+    let pool = f.sql().await;
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM bridge_lower_quality")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 2);
+    f.bridge.clear_lower_quality_proofs().await.unwrap();
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM bridge_lower_quality")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 0);
+    let (consumer, admin) = f.consumer().await;
+    let consumer = consumer.with_lower_quality_shadow(Some(720));
+    admin_request(
+        &admin,
+        "batch-revoked",
+        "owner-a",
+        serde_json::json!({"action":"lower_quality","job":job,"revision":evidence.revision}),
+    )
+    .await;
+    consumer.tick(12).await.unwrap();
+    assert_eq!(
+        request_state(&admin, "batch-revoked").await,
+        "controller_deferred"
+    );
+    assert_eq!(f.engine.load_job(job).await.unwrap(), before);
+    assert!(f.engine.outbox(job).await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn lower_quality_accepts_fresh_equal_observation_and_approval_timestamps() {
+    for (authority_at, release_at) in [(10, 10), (11, 11), (12, 12), (11, 12)] {
+        let f = Fixture::new().await;
+        let (d, job, mut evidence) = bounded_pending(&f).await;
+        let mut auth = authority(&d, "viewer-a");
+        auth.observed_at = authority_at;
+        evidence.observed_at = release_at;
+        f.bridge.record_authority(d.report_id, &auth).await.unwrap();
+        f.bridge.record_lower_quality(job, &evidence).await.unwrap();
+        let (consumer, pool) = f.consumer().await;
+        let consumer = consumer.with_lower_quality_shadow(Some(720));
+        admin_request(
+            &pool,
+            "fresh",
+            "owner-a",
+            serde_json::json!({"action":"lower_quality","job":job,"revision":evidence.revision}),
+        )
+        .await;
+        consumer.tick(12).await.unwrap();
+        assert_eq!(
+            request_state(&pool, "fresh").await,
+            "controller_applied",
+            "{authority_at} {release_at}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn lower_quality_approval_freshness_uses_elapsed_time_at_realistic_epoch() {
+    let created_at = 1_700_000_000;
+    let f = Fixture::new().await;
+    let (_, job, evidence) = bounded_pending_at(&f, created_at).await;
+    let (consumer, pool) = f.consumer().await;
+    let consumer = consumer.with_lower_quality_shadow(Some(720));
+    admin_request(
+        &pool,
+        "epoch",
+        "owner-a",
+        serde_json::json!({"action":"lower_quality","job":job,"revision":evidence.revision}),
+    )
+    .await;
+    consumer.tick(created_at + 2).await.unwrap();
+    assert_eq!(request_state(&pool, "epoch").await, "controller_applied");
+}
+
+#[tokio::test]
+async fn fresh_file_and_release_reads_do_not_renew_expired_broken_file_authority() {
+    for now in [14, 15, 16] {
+        let mut f = Fixture::new().await;
+        let (d, job, mut evidence) = bounded_pending(&f).await;
+        // Refresh bytes and release only. The independent decode/access
+        // authority was collected at 10 and expires at 15.
+        f.register(&d, now).await;
+        evidence.observed_at = now;
+        f.bridge.record_lower_quality(job, &evidence).await.unwrap();
+        let mut opts = options();
+        opts.evidence_max_age = 5;
+        f.bridge = Bridge::open(&f.path, f.engine.clone(), opts).await.unwrap();
+        let (consumer, pool) = f.consumer().await;
+        let consumer = consumer.with_lower_quality_shadow(Some(720));
+        admin_request(
+            &pool,
+            "fresh-bytes",
+            "owner-a",
+            serde_json::json!({"action":"lower_quality","job":job,"revision":evidence.revision}),
+        )
+        .await;
+        consumer.tick(now).await.unwrap();
+        assert_eq!(
+            request_state(&pool, "fresh-bytes").await,
+            if now < 15 {
+                "controller_applied"
+            } else {
+                "controller_deferred"
+            },
+            "approval at {now}"
+        );
+        assert_eq!(
+            f.engine.outbox(job).await.unwrap().len(),
+            usize::from(now < 15)
+        );
+    }
 }

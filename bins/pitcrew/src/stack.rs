@@ -172,6 +172,26 @@ pub async fn admin_consumer(
         admin.admin_account_ids.clone(),
     )
     .await
-    .map(Some)
+    .map(|consumer| {
+        Some(
+            if config.engine.mode == pitcrew_config::EngineMode::Shadow {
+                let minimum = if config.stack.enabled
+                    && config.runtime.search_enabled
+                    && config.plex.is_some()
+                    && !config.arr.is_empty()
+                {
+                    config
+                        .lower_quality
+                        .minimum_resolution
+                        .map(|value| value.get())
+                } else {
+                    None
+                };
+                consumer.with_lower_quality_shadow(minimum)
+            } else {
+                consumer
+            },
+        )
+    })
     .map_err(|_| JOURNAL_UNAVAILABLE)
 }

@@ -111,3 +111,32 @@ Offline tests cover evidence/access boundaries, deduplication, restart recovery,
 budgets/cooldowns, SQL shapes, progress and terminal delivery. The drill's synthetic
 scenario exercises the real message/diagnosis/engine/fake-effect/ready loop.
 These tests do not certify any real platform or authorize live repair.
+
+Bounded lower-quality approvals use a separate `bridge_lower_quality` read-side
+snapshot. `record_lower_quality` accepts only trusted collector evidence tied to
+the exact job revision, original bytes, arr instance/item, release and resolution
+bound. Clear it before a release refresh, including a failed refresh. The runtime
+refreshes current report authority first, then the exact pending release, then
+consumes admin commands. A release proof older than current authority is refused.
+
+`Consumer::with_lower_quality_shadow` explicitly enables the shadow approval
+path. The consumer leases the job, checks its revision/state, positive current
+access, exact broken-file authority and registry, current exclusions, and current
+budget limits against the already reserved envelope. Approval expiry is capped by
+access and evidence expiry; reading a saved proof never renews it. The reducer
+persists the upgrade-guard intent before any effect dispatch. This path neither
+fabricates guard success nor grants permission to send a live mutation. The
+default consumer refuses live lower-quality requests because a certified
+upgrade-guard transport is unavailable.
+
+The resolution floor currently bounds the shadow candidate proposal. Live
+lower-quality certification must additionally verify that downloaded/imported
+media actually meets the floor; release metadata alone cannot prove decoded
+resolution. The live lower-quality refusal remains in force until that proof and
+the upgrade-guard transport are certified.
+
+The shadow consumer also receives the current configured resolution floor. An
+absent/zero floor disables approval, and a floor different from the pending bound
+requires a new proposal. The stack disables this approval path when release
+searches or report-runtime prerequisites are missing. This check still applies
+when no runtime tick runs, so a cached proof cannot preserve a removed opt-in.

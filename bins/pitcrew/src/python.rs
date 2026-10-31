@@ -4,8 +4,10 @@
 //! Explicit report/attempt links establish historical actor ownership only.
 //! Legacy rows do not contain current access grants or immutable file identities;
 //! they cannot authorize a reducer transition or establish safe live parity.
+use base64::Engine as _;
 use pitcrew_engine::observer::{self, Action, Activity, Actor, Diff, Safety};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use sqlx::{Connection, Row, SqliteConnection, sqlite::SqliteConnectOptions};
 use std::{
     collections::BTreeMap,
@@ -116,6 +118,7 @@ pub struct Snapshot {
     pub budget_records: Vec<BudgetRecord>,
     pub unowned_attempts: u64,
     pub uncorrelated_audits: u64,
+    pub arr_actions: Vec<crate::attribution::ExternalAction>,
 }
 
 /// Refuse aliased destinations before opening the writable engine Store.
@@ -260,6 +263,119 @@ struct Report {
     media: Option<i64>,
     media_type: String,
 }
+
+#[derive(Clone, Copy)]
+enum CompletionKind {
+    Report,
+    Landmine,
+}
+
+fn completion_key(key: &str) -> Result<Option<(CompletionKind, u64, &str)>, Error> {
+    let mut parts = key.split(':');
+    let kind = match parts.next() {
+        Some("finish") => CompletionKind::Report,
+        Some("lmfinish") => CompletionKind::Landmine,
+        _ => return Err(Error::InvalidRow),
+    };
+    let owner = parts.next().ok_or(Error::InvalidRow)?;
+    let download = parts.next().ok_or(Error::InvalidRow)?;
+    if let Some(suffix) = parts.next() {
+        // Counters/wait flags are not accepted-dispatch receipts. Their values
+        // need not be read, parsed or retained.
+        return if matches!(suffix, "n" | "wait") && parts.next().is_none() {
+            Ok(None)
+        } else {
+            Err(Error::InvalidRow)
+        };
+    }
+    let id = positive(owner.parse().map_err(|_| Error::InvalidRow)?)?;
+    if id.to_string() != owner {
+        return Err(Error::InvalidRow);
+    }
+    // Python formats a missing dictionary value as the literal "None".
+    if download.is_empty() || download == "None" {
+        return Ok(None);
+    }
+    Ok(Some((kind, id, download)))
+}
+
+async fn native_completions(
+    connection: &mut SqliteConnection,
+    reports: &BTreeMap<u64, Report>,
+    has_landmines: bool,
+) -> Result<Vec<crate::attribution::ExternalAction>, Error> {
+    // Read only candidate keys first. Unrelated values may contain tokens or
+    // viewer data and must never be selected, even to discard them afterward.
+    let keys: Vec<String> = sqlx::query_scalar(
+        "SELECT k FROM kv WHERE k GLOB 'finish:*' OR k GLOB 'lmfinish:*' ORDER BY k",
+    )
+    .fetch_all(&mut *connection)
+    .await
+    .map_err(|_| Error::InvalidRow)?;
+    let mut actions = Vec::new();
+    for key in keys {
+        let Some((kind, owner, download)) = completion_key(&key)? else {
+            continue;
+        };
+        let instance = match kind {
+            CompletionKind::Report => reports.get(&owner).and_then(|r| r.instance.clone()),
+            CompletionKind::Landmine if has_landmines => {
+                let instances: Vec<Option<String>> =
+                    sqlx::query_scalar("SELECT instance FROM landmines WHERE id=?")
+                        .bind(owner as i64)
+                        .fetch_all(&mut *connection)
+                        .await
+                        .map_err(|_| Error::InvalidRow)?;
+                match instances.as_slice() {
+                    [] => None,
+                    [instance] => instance.clone(),
+                    _ => return Err(Error::InvalidRow),
+                }
+            }
+            CompletionKind::Landmine => None,
+        };
+        let Some(instance) = instance.filter(|instance| !instance.is_empty()) else {
+            continue;
+        };
+        let correlation =
+            observer::download_correlation(&instance, download).ok_or(Error::InvalidRow)?;
+        let values: Vec<String> = sqlx::query_scalar("SELECT v FROM kv WHERE k=?")
+            .bind(&key)
+            .fetch_all(&mut *connection)
+            .await
+            .map_err(|_| Error::InvalidRow)?;
+        let [value] = values.as_slice() else {
+            return Err(Error::InvalidRow);
+        };
+        match kind {
+            CompletionKind::Report => {
+                let at = value.parse::<f64>().map_err(|_| Error::InvalidRow)?;
+                timestamp(at)?;
+                if at <= 0.0 {
+                    return Err(Error::InvalidRow);
+                }
+            }
+            CompletionKind::Landmine => {
+                if value.parse::<u64>().map_err(|_| Error::InvalidRow)? == 0 {
+                    return Err(Error::InvalidRow);
+                }
+            }
+        }
+        actions.push(crate::attribution::ExternalAction {
+            // The native key identifies a dispatch independently of its later
+            // timestamp/count updates. Retain neither raw keys nor values.
+            key: format!(
+                "kv:{}",
+                base64::engine::general_purpose::URL_SAFE_NO_PAD
+                    .encode(Sha256::digest(key.as_bytes()))
+            ),
+            correlation,
+            action: Action::Import,
+            actor: Actor::ExternalTool,
+        });
+    }
+    Ok(actions)
+}
 fn audit_report(detail: &str) -> Option<(u64, &str)> {
     let rest = detail.strip_prefix("report ")?;
     let end = rest.find(|c: char| !c.is_ascii_digit())?;
@@ -308,12 +424,16 @@ pub async fn read(source: &Path, key: &str) -> Result<Snapshot, Error> {
         return Err(Error::InvalidSchema);
     }
     let mut total = 0;
-    for table in [
-        "reports",
-        "fix_attempts",
-        "audit",
-        "item_fixes",
-        "rate_events",
+    let mut tables = std::collections::BTreeSet::new();
+    for (table, required) in [
+        ("reports", true),
+        ("fix_attempts", true),
+        ("audit", true),
+        ("item_fixes", true),
+        ("rate_events", true),
+        ("arr_actions", false),
+        ("kv", false),
+        ("landmines", false),
     ] {
         let kind: Option<String> =
             sqlx::query_scalar("SELECT type FROM sqlite_schema WHERE name=?")
@@ -321,6 +441,9 @@ pub async fn read(source: &Path, key: &str) -> Result<Snapshot, Error> {
                 .fetch_optional(&mut *tx)
                 .await
                 .map_err(|_| Error::InvalidSchema)?;
+        if kind.is_none() && !required {
+            continue;
+        }
         if kind.as_deref() != Some("table") {
             return Err(Error::InvalidSchema);
         }
@@ -332,6 +455,19 @@ pub async fn read(source: &Path, key: &str) -> Result<Snapshot, Error> {
         if total > MAX_ROWS {
             return Err(Error::TooManyRows);
         }
+        tables.insert(table);
+    }
+    // Check optional native schema without selecting any private values.
+    for (table, query) in [
+        ("kv", "SELECT k,v FROM kv LIMIT 0"),
+        ("landmines", "SELECT id,instance FROM landmines LIMIT 0"),
+    ] {
+        if tables.contains(table) {
+            sqlx::query(query)
+                .execute(&mut *tx)
+                .await
+                .map_err(|_| Error::InvalidSchema)?;
+        }
     }
     let mut reports = BTreeMap::new();
     for row in sqlx::query(
@@ -342,7 +478,7 @@ pub async fn read(source: &Path, key: &str) -> Result<Snapshot, Error> {
     .map_err(|_| Error::InvalidSchema)?
     {
         let id = positive(row.try_get("id").map_err(|_| Error::InvalidRow)?)?;
-        reports.insert(
+        let previous = reports.insert(
             id,
             Report {
                 item: row.try_get("item_key").map_err(|_| Error::InvalidRow)?,
@@ -351,13 +487,32 @@ pub async fn read(source: &Path, key: &str) -> Result<Snapshot, Error> {
                 media_type: row.try_get("media_type").map_err(|_| Error::InvalidRow)?,
             },
         );
+        if previous.is_some() {
+            return Err(Error::InvalidRow);
+        }
     }
     let mut result = Snapshot {
         source: key.into(),
         ..Snapshot::default()
     };
+    if tables.contains("kv") {
+        result.arr_actions =
+            native_completions(&mut tx, &reports, tables.contains("landmines")).await?;
+    }
+    let columns = sqlx::query("PRAGMA table_info(fix_attempts)")
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(|_| Error::InvalidSchema)?;
+    let download_column = if columns
+        .iter()
+        .any(|row| row.get::<String, _>("name") == "download_id")
+    {
+        "download_id"
+    } else {
+        "NULL AS download_id"
+    };
     let mut owned = std::collections::BTreeSet::new();
-    for row in sqlx::query("SELECT id,report_id,item_key,instance,media_kind,media_id,verdict,ts,CASE WHEN length(title)>0 THEN 1 ELSE 0 END AS has_release FROM fix_attempts ORDER BY id")
+    for row in sqlx::query(&format!("SELECT id,report_id,item_key,instance,media_kind,media_id,verdict,ts,{download_column},CASE WHEN length(title)>0 THEN 1 ELSE 0 END AS has_release FROM fix_attempts ORDER BY id"))
         .fetch_all(&mut *tx).await.map_err(|_| Error::InvalidSchema)?
     {
         let id = positive(row.try_get("id").map_err(|_| Error::InvalidRow)?)?;
@@ -370,6 +525,18 @@ pub async fn read(source: &Path, key: &str) -> Result<Snapshot, Error> {
         positive(media)?;
         let verdict: String = row.try_get("verdict").map_err(|_| Error::InvalidRow)?;
         let has_release: i64 = row.try_get("has_release").map_err(|_| Error::InvalidRow)?;
+        let download: Option<String> = row.try_get("download_id").map_err(|_| Error::InvalidRow)?;
+        // A tool's explicit dispatch receipt also covers proactive repairs with
+        // no report. Never derive this identifier from a title/target/media ID.
+        if matches!(verdict.as_str(), "grabbed" | "imported" | "ok" | "bad") && has_release == 1
+            && let Some(download) = download
+        {
+            result.arr_actions.push(crate::attribution::ExternalAction {
+                key: format!("attempt:{id}:download"),
+                correlation: observer::download_correlation(&instance, &download).ok_or(Error::InvalidRow)?,
+                action: Action::Grab, actor: Actor::ExternalTool,
+            });
+        }
         let Some((report_id, report)) = report_id.and_then(|id| reports.get(&id).map(|report| (id, report))) else {
             result.unowned_attempts += 1;
             continue;
@@ -386,6 +553,45 @@ pub async fn read(source: &Path, key: &str) -> Result<Snapshot, Error> {
         let at = timestamp(ts)?;
         owned.insert(report_id);
         result.replays.push(replay(key, report_id, at, format!("attempt:{id}:grab"), Action::Grab));
+    }
+    // Optional normalized export of machine-recorded accepted actions. Older
+    // snapshots need not have this table. A view is not a trusted action log.
+    if tables.contains("arr_actions") {
+        for row in
+            sqlx::query("SELECT id,instance,download_id,actor,action FROM arr_actions ORDER BY id")
+                .fetch_all(&mut *tx)
+                .await
+                .map_err(|_| Error::InvalidSchema)?
+        {
+            let id = positive(row.try_get("id").map_err(|_| Error::InvalidRow)?)?;
+            let instance: String = row.try_get("instance").map_err(|_| Error::InvalidRow)?;
+            let download: String = row.try_get("download_id").map_err(|_| Error::InvalidRow)?;
+            let actor = match row
+                .try_get::<&str, _>("actor")
+                .map_err(|_| Error::InvalidRow)?
+            {
+                "external_tool" => Actor::ExternalTool,
+                "external_importer" => Actor::ExternalImporter,
+                _ => return Err(Error::InvalidRow),
+            };
+            let action = match row
+                .try_get::<&str, _>("action")
+                .map_err(|_| Error::InvalidRow)?
+            {
+                "grab" => Action::Grab,
+                "import" => Action::Import,
+                "remove_download" => Action::RemoveDownload,
+                "delete_library" => Action::DeleteLibrary,
+                _ => return Err(Error::InvalidRow),
+            };
+            result.arr_actions.push(crate::attribution::ExternalAction {
+                key: format!("action:{id}"),
+                correlation: observer::download_correlation(&instance, &download)
+                    .ok_or(Error::InvalidRow)?,
+                action,
+                actor,
+            });
+        }
     }
     // Parse only exact machine-generated report prefixes. A title, matching time,
     // or arr media ID alone is insufficient for ownership.
@@ -532,6 +738,19 @@ impl crate::App {
                 .map_err(|_| Error::StoreUnavailable)?;
         }
         let mut inserted = 0;
+        for action in snapshot.arr_actions {
+            inserted += usize::from(
+                self.store
+                    .ingest_observation(
+                        &format!("legacy_arr_action:{}", snapshot.source),
+                        &action.key,
+                        &serde_json::to_value(&action).map_err(|_| Error::InvalidRow)?,
+                        at,
+                    )
+                    .await
+                    .map_err(|_| Error::StoreUnavailable)?,
+            );
+        }
         for replay in snapshot.replays {
             inserted += usize::from(
                 self.store

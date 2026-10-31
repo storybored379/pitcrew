@@ -235,6 +235,8 @@ async fn run() -> Result<(), String> {
             .map_err(|_| "arbiter report file unavailable")?;
         let mut cursor = 0;
         let mut arbiter_count = 0;
+        let attribution = pitcrew::attribution::Index::load(&app.store).await?;
+        let mut queue_actors = Vec::new();
         loop {
             let rows = app
                 .store
@@ -244,9 +246,11 @@ async fn run() -> Result<(), String> {
             if rows.is_empty() {
                 break;
             }
-            for row in rows {
+            for mut row in rows {
                 cursor = row.id;
                 if row.source.starts_with("arbiter:") {
+                    attribution.queue(&mut row.payload);
+                    queue_actors.push(row.payload.clone());
                     serde_json::to_writer(&mut arbiter, &row)
                         .map_err(|_| "arbiter report write failed")?;
                     writeln!(arbiter).map_err(|_| "arbiter report write failed")?;
@@ -254,9 +258,30 @@ async fn run() -> Result<(), String> {
                 }
             }
         }
+        let queue_counts = |field: &str| {
+            [
+                "engine",
+                "external_tool",
+                "external_importer",
+                "python",
+                "unknown",
+            ]
+            .map(|actor| {
+                format!(
+                    "{actor}={}",
+                    queue_actors
+                        .iter()
+                        .filter(|value| value[field].as_str() == Some(actor))
+                        .count()
+                )
+            })
+            .join(", ")
+        };
         let summary = format!(
-            "{} {} arbiter observations exported separately.",
+            "{}\nQueue download ownership: {}.\nQueue import actions: {}. {} arbiter observations exported separately.",
             observer::summary(&reports),
+            queue_counts("download_actor"),
+            queue_counts("import_actor"),
             arbiter_count
         );
         let mut human = private_file(Path::new(&format!("{path}.summary.txt")))
@@ -507,6 +532,7 @@ async fn poll<T: pitcrew_upstream::Transport>(
         complete = false;
     }
     let mut candidate_requests = 0;
+    let attribution = pitcrew::attribution::Index::load(&app.store).await?;
     for row in queue.records.into_iter().take(100) {
         let candidates = if row.tracked_download_state.as_deref() == Some("importBlocked") {
             if let Some(download) = &row.download_id {
@@ -535,11 +561,18 @@ async fn poll<T: pitcrew_upstream::Transport>(
             candidates.as_deref(),
         );
         let report = pitcrew_arbiter::shadow::compare(&observation);
+        let mut report = serde_json::to_value(report).map_err(|_| "encoding")?;
+        report["download_correlation"] = serde_json::json!(
+            row.download_id
+                .as_deref()
+                .and_then(|download| observer::download_correlation(id, download))
+        );
+        attribution.queue(&mut report);
         app.store
             .ingest_observation(
                 &format!("arbiter:{id}"),
                 &format!("{}:{at}", row.id),
-                &serde_json::to_value(report).map_err(|_| "encoding")?,
+                &report,
                 at,
             )
             .await

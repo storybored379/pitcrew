@@ -2,6 +2,7 @@
 //!
 //! Jobs are restored exclusively by replaying accepted events through the domain
 //! reducer. No deserialization can install an unchecked `FixJob` snapshot.
+pub mod comparison;
 pub mod delivery;
 pub mod policy;
 pub mod registry;
@@ -386,6 +387,17 @@ impl Store {
     ) -> Result<Applied> {
         self.transition(lease, revision, key, event, (now, now), None)
             .await
+    }
+
+    /// Recheck the already reserved job envelope against current installation
+    /// limits. Active ownership stays in both rolling windows, however old it is.
+    /// This never allocates a second envelope or renews the reservation timestamp.
+    pub async fn revalidate_budget(&self, job: u64, limits: BudgetLimits, now: u64) -> Result<()> {
+        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
+        let mut spec = load(&mut tx, job).await?.spec;
+        spec.policy.max_grabs = 0;
+        spec.created_at = now;
+        reserve_budget(&mut tx, &spec, limits).await
     }
 
     pub async fn apply_result(

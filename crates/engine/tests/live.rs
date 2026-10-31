@@ -1375,6 +1375,14 @@ async fn committed_grab_uses_real_client_and_does_not_turn_http_200_into_receipt
             h.router().write(&intent).await.unwrap(),
             Outcome::Observed(Observation::GrabAmbiguous)
         );
+        assert!(
+            !h.store
+                .observations()
+                .await
+                .unwrap()
+                .iter()
+                .any(|row| row.source == "engine_dispatch")
+        );
         let state = h.arr.0.lock().unwrap();
         let request = state
             .requests
@@ -1389,6 +1397,52 @@ async fn committed_grab_uses_real_client_and_does_not_turn_http_200_into_receipt
         assert_eq!(request.body.as_ref().unwrap()["guid"], "release-guid");
         assert_eq!(request.body.as_ref().unwrap()["indexerId"], 7);
     }
+}
+
+#[tokio::test]
+async fn only_an_explicit_accepted_download_id_records_grab_attribution() {
+    for kind in [Kind::Sonarr, Kind::Radarr] {
+        let h = Harness::new(kind).await;
+        let intent = h.prepare().await;
+        h.arr.0.lock().unwrap().after_read.insert(
+            "/api/v3/release".into(),
+            json!({"downloadId":"download-receipt"}),
+        );
+        assert_eq!(
+            h.router().write(&intent).await.unwrap(),
+            Outcome::Observed(Observation::GrabAmbiguous)
+        );
+        let rows = h.store.observations().await.unwrap();
+        let row = rows
+            .iter()
+            .find(|row| row.source == "engine_dispatch")
+            .unwrap();
+        let receipt: pitcrew_engine::observer::DispatchReceipt =
+            serde_json::from_value(row.payload.clone()).unwrap();
+        assert_eq!(receipt.intent, intent);
+        assert_eq!(
+            receipt.correlation,
+            pitcrew_engine::observer::download_correlation(&h.cert.client, "download-receipt")
+                .unwrap()
+        );
+    }
+    let h = Harness::new(Kind::Sonarr).await;
+    let intent = h.prepare().await;
+    h.arr
+        .0
+        .lock()
+        .unwrap()
+        .after_read
+        .insert("/api/v3/release".into(), json!({"downloadId":""}));
+    assert_eq!(h.router().write(&intent).await, Err(CallError::Unavailable));
+    assert!(
+        !h.store
+            .observations()
+            .await
+            .unwrap()
+            .iter()
+            .any(|row| row.source == "engine_dispatch")
+    );
 }
 
 #[tokio::test]
@@ -1539,6 +1593,22 @@ async fn decoded_source_and_arbiter_exact_candidate_gate_manual_import() {
             h.router().write(&intent).await.unwrap(),
             Outcome::Observed(Observation::ImportAccepted)
         );
+        let receipts = h.store.observations().await.unwrap();
+        let receipt = receipts
+            .iter()
+            .find(|row| row.source == "engine_dispatch")
+            .unwrap();
+        let receipt: pitcrew_engine::observer::DispatchReceipt =
+            serde_json::from_value(receipt.payload.clone()).unwrap();
+        assert_eq!(receipt.intent, intent);
+        assert_eq!(
+            receipt.correlation,
+            pitcrew_engine::observer::download_correlation(
+                &certificate(kind).client,
+                "download-one"
+            )
+            .unwrap()
+        );
         let state = h.arr.0.lock().unwrap();
         let request = state
             .requests
@@ -1642,6 +1712,18 @@ async fn blocklist_preserves_download_and_reserves_cross_job_exclusion() {
     assert_eq!(
         h.router().write(&intent).await.unwrap(),
         Outcome::Observed(Observation::DeleteAcknowledged)
+    );
+    let rows = h.store.observations().await.unwrap();
+    let receipt = rows
+        .iter()
+        .find(|row| row.source == "engine_dispatch")
+        .unwrap();
+    let receipt: pitcrew_engine::observer::DispatchReceipt =
+        serde_json::from_value(receipt.payload.clone()).unwrap();
+    assert_eq!(receipt.intent, intent);
+    assert_eq!(
+        receipt.correlation,
+        pitcrew_engine::observer::download_correlation(&h.cert.client, "download-one").unwrap()
     );
     assert!(
         h.store

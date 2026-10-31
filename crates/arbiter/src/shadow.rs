@@ -179,16 +179,7 @@ pub struct ShadowReport {
 /// per JSONL line; absence of attribution is retained, not guessed.
 pub fn compare(o: &ImportObservation) -> ShadowReport {
     let decision = evaluate(o);
-    let divergence = match o.legacy_action {
-        LegacyAction::Unknown => Some(Divergence::UnknownLegacyAction),
-        LegacyAction::BlocklistAndSearch => Some(Divergence::UnbudgetedReplacement),
-        LegacyAction::Import if decision.action != Action::Allow => {
-            Some(Divergence::ImportWithoutSafeProposal)
-        }
-        LegacyAction::Import => None,
-        LegacyAction::Hold if decision.action == Action::Hold => None,
-        _ => Some(Divergence::DifferentDecision),
-    };
+    let divergence = divergence(o.legacy_action, decision);
     let interference = o
         .external_failure
         .filter(|_| o.owned_download == Some(o.download))
@@ -204,5 +195,20 @@ pub fn compare(o: &ImportObservation) -> ShadowReport {
         decision,
         divergence,
         interference,
+    }
+}
+
+/// Compare a trusted action receipt with the already evaluated safety proposal.
+/// Attribution can identify an action; it cannot relax the decision's evidence.
+pub fn divergence(action: LegacyAction, decision: Decision) -> Option<Divergence> {
+    match action {
+        LegacyAction::Unknown => Some(Divergence::UnknownLegacyAction),
+        LegacyAction::BlocklistAndSearch => Some(Divergence::UnbudgetedReplacement),
+        LegacyAction::Import if decision.action != Action::Allow => {
+            Some(Divergence::ImportWithoutSafeProposal)
+        }
+        LegacyAction::Import => None,
+        LegacyAction::Hold if decision.action == Action::Hold => None,
+        _ => Some(Divergence::DifferentDecision),
     }
 }

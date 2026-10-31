@@ -1344,3 +1344,61 @@ async fn scheduler_pages_are_bounded_and_resource_owner_tracks_terminal_release(
     // Historical jobs remain pageable so final notifications can still be driven.
     assert_eq!(store.jobs_page(0, 2).await.unwrap(), vec![1, 2]);
 }
+
+#[tokio::test]
+async fn current_budget_revalidation_counts_reserved_envelopes_without_reserving_again() {
+    let (dir, store, lease) = setup().await;
+    let caps = BudgetLimits {
+        global_hour: 2,
+        global_day: 2,
+        viewer_hour: 2,
+        viewer_day: 2,
+    };
+    let before = store.load_job(1).await.unwrap();
+    store.revalidate_budget(1, caps, 0).await.unwrap();
+    // Still-active ownership cannot escape limits by aging out of a window.
+    store.revalidate_budget(1, caps, 100_000).await.unwrap();
+    for scope in 0..4 {
+        let mut low = caps;
+        match scope {
+            0 => low.global_hour = 1,
+            1 => low.global_day = 1,
+            2 => low.viewer_hour = 1,
+            _ => low.viewer_day = 1,
+        }
+        assert!(matches!(
+            store.revalidate_budget(1, low, 100_000).await,
+            Err(StoreError::BudgetExhausted)
+        ));
+    }
+    assert_eq!(store.load_job(1).await.unwrap(), before);
+    let pool = sqlx::SqlitePool::connect_with(
+        SqliteConnectOptions::new().filename(dir.path().join("journal.db")),
+    )
+    .await
+    .unwrap();
+    let rows: Vec<(i64, i64)> = sqlx::query_as("SELECT at,units FROM budget_reservations")
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+    assert_eq!(rows, [(0, 2)]);
+    store
+        .apply_event(&lease, 0, "cancel", Event::Fail(Failure::Cancelled), 1)
+        .await
+        .unwrap();
+    let zero = BudgetLimits {
+        global_hour: 0,
+        global_day: 0,
+        viewer_hour: 0,
+        viewer_day: 0,
+    };
+    assert!(matches!(
+        store.revalidate_budget(1, zero, 86_399).await,
+        Err(StoreError::BudgetExhausted)
+    ));
+    store.revalidate_budget(1, zero, 86_400).await.unwrap();
+    assert!(matches!(
+        store.revalidate_budget(999, caps, 1).await,
+        Err(StoreError::Missing)
+    ));
+}

@@ -278,11 +278,11 @@ fn jsonl_report_roundtrips_and_summary_counts_each_category() {
         another_difference,
     ];
     assert_eq!(
-        summary(&reports),
+        summary(&reports).lines().next().unwrap(),
         "5 comparisons: 2 matching actions, 1 incomplete; 1 unsafe observed, 1 unsafe proposed. Unknown evidence does not establish safe parity."
     );
     assert_eq!(
-        summary(&[]),
+        summary(&[]).lines().next().unwrap(),
         "0 comparisons: 0 matching actions, 0 incomplete; 0 unsafe observed, 0 unsafe proposed. Unknown evidence does not establish safe parity."
     );
     let jsonl = reports
@@ -350,4 +350,203 @@ fn external_actors_roundtrip_without_assuming_a_specific_tool() {
     );
     assert_eq!(diff.agreement, Agreement::InsufficientEvidence);
     assert!(diff.missing_evidence);
+}
+
+#[test]
+fn summary_separates_attributed_actors_from_unattributed_traffic() {
+    let mut reports = vec![];
+    for actor in [
+        Actor::Engine,
+        Actor::ExternalTool,
+        Actor::ExternalImporter,
+        Actor::Legacy,
+        Actor::Unknown,
+    ] {
+        reports.push(compare(
+            "private-correlation".into(),
+            safe(Action::Grab, actor),
+            safe(Action::Hold, Actor::Engine),
+        ));
+    }
+    let mut spoofed = safe(Action::Grab, Actor::Engine);
+    spoofed.correlated = false;
+    reports.push(compare(
+        "uncorrelated".into(),
+        spoofed,
+        safe(Action::Hold, Actor::Engine),
+    ));
+    let text = summary(&reports);
+    assert!(
+        text.contains("4 attributed actions; 2 unattributed"),
+        "{text}"
+    );
+    assert!(
+        text.contains("engine=1, external_tool=1, external_importer=1, python=1, unknown=2"),
+        "{text}"
+    );
+    assert!(text.contains("observed Grab -> proposed Hold: 1"), "{text}");
+    assert!(!text.contains("private-correlation"));
+}
+
+#[test]
+fn download_join_is_exact_scoped_and_bounded() {
+    use pitcrew_engine::observer::download_correlation as key;
+    assert_eq!(key("movies", "download"), key("movies", "download"));
+    assert_ne!(key("movies", "download"), key("series", "download"));
+    assert_ne!(key("movies", "download"), key("movies", "Download"));
+    assert_ne!(key("ab", "c"), key("a", "bc"));
+    assert_eq!(key("movies", "download").unwrap().len(), 64);
+    for bad in [
+        "".into(),
+        " ".into(),
+        "a\nb".into(),
+        "é".into(),
+        "a".repeat(257),
+    ] {
+        assert!(key(&bad, "download").is_none());
+        assert!(key("movies", &bad).is_none());
+    }
+    assert!(key(&"a".repeat(256), &"b".repeat(256)).is_some());
+}
+
+#[tokio::test]
+async fn dispatch_receipt_requires_the_exact_dispatched_intent_and_is_immutable() {
+    use pitcrew_domain::{Access, Event, IntentKey, Policy, StageTimeouts};
+    use pitcrew_engine::observer::{DispatchReceipt, record_dispatch};
+    use pitcrew_store::{BudgetLimits, NewJob, OutboxStatus, Store};
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open(dir.path().join("db")).await.unwrap();
+    store
+        .create_job(
+            &NewJob {
+                id: 1,
+                viewer: "viewer".into(),
+                resource: "media".into(),
+                library: 2,
+                original: FileIdentity { id: 3, revision: 1 },
+                constraints: Default::default(),
+                policy: Policy {
+                    max_grabs: 2,
+                    stage_timeout: 30,
+                    total_timeout: 300,
+                },
+                timeouts: StageTimeouts {
+                    download: 30,
+                    import: 30,
+                    decode: 30,
+                    verify_retry: 30,
+                },
+                created_at: 0,
+            },
+            "job",
+            BudgetLimits {
+                global_hour: 10,
+                global_day: 20,
+                viewer_hour: 10,
+                viewer_day: 20,
+            },
+        )
+        .await
+        .unwrap();
+    let lease = store.acquire_lease(1, "test", 0, 100).await.unwrap();
+    let applied = store
+        .apply_event(
+            &lease,
+            0,
+            "select",
+            Event::SelectRelease {
+                release: 4,
+                access: Access::Granted {
+                    library: 2,
+                    expires_at: 100,
+                },
+            },
+            1,
+        )
+        .await
+        .unwrap();
+    let intent = applied.intents[0].clone();
+    assert!(
+        record_dispatch(&store, &intent, "movies", "download", 2)
+            .await
+            .is_err()
+    );
+    let key = IntentKey {
+        job: 1,
+        sequence: intent.sequence,
+    };
+    store.start_intent(&lease, key, 1, 2).await.unwrap();
+    let mut forged = intent.clone();
+    forged.job = 2;
+    assert!(
+        record_dispatch(&store, &forged, "movies", "download", 2)
+            .await
+            .is_err()
+    );
+    forged = intent.clone();
+    forged.sequence += 1;
+    assert!(
+        record_dispatch(&store, &forged, "movies", "download", 2)
+            .await
+            .is_err()
+    );
+    forged = intent.clone();
+    forged.effect = Effect::CheckTarget {
+        file: FileIdentity { id: 3, revision: 1 },
+        constraints: Default::default(),
+    };
+    assert!(
+        record_dispatch(&store, &forged, "movies", "download", 2)
+            .await
+            .is_err()
+    );
+    assert!(
+        record_dispatch(&store, &intent, "", "download", 2)
+            .await
+            .is_err()
+    );
+    assert!(
+        record_dispatch(&store, &intent, "movies", "download", 2)
+            .await
+            .unwrap()
+    );
+    assert!(
+        !record_dispatch(&store, &intent, "movies", "download", 3)
+            .await
+            .unwrap()
+    );
+    assert!(
+        record_dispatch(&store, &intent, "series", "download", 3)
+            .await
+            .is_err()
+    );
+    store
+        .finish_intent(&lease, key, OutboxStatus::Uncertain, 3)
+        .await
+        .unwrap();
+    assert!(
+        !record_dispatch(&store, &intent, "movies", "download", 3)
+            .await
+            .unwrap()
+    );
+    store
+        .finish_intent(&lease, key, OutboxStatus::Completed, 4)
+        .await
+        .unwrap();
+    assert!(
+        !record_dispatch(&store, &intent, "movies", "download", 4)
+            .await
+            .unwrap()
+    );
+    let records = store.observations().await.unwrap();
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].source, "engine_dispatch");
+    assert_eq!(records[0].key, format!("1:{}", intent.sequence));
+    assert_eq!(records[0].at, 2);
+    let receipt: DispatchReceipt = serde_json::from_value(records[0].payload.clone()).unwrap();
+    assert_eq!(receipt.intent, intent);
+    assert_eq!(
+        receipt.correlation,
+        pitcrew_engine::observer::download_correlation("movies", "download").unwrap()
+    );
 }

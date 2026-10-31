@@ -59,6 +59,24 @@ pub struct ReleaseCandidate {
     pub quality: QualityRelation,
 }
 
+/// An explicit resolution floor from trusted arr metadata. Numeric quality IDs
+/// and release titles are not ordered quality evidence. This bounded path only
+/// supports a strict resolution downgrade, not inferred source/profile rankings.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LowerQualityBound {
+    pub minimum_resolution: u32,
+    pub candidate_resolution: u32,
+    pub original_resolution: u32,
+}
+
+impl LowerQualityBound {
+    pub fn valid(self) -> bool {
+        self.minimum_resolution > 0
+            && self.candidate_resolution >= self.minimum_resolution
+            && self.candidate_resolution < self.original_resolution
+    }
+}
+
 /// A snapshot issued by the authenticated admin boundary, never accepted directly
 /// from a viewer message. Approval applies only to these bytes and this release.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -160,6 +178,11 @@ pub enum Event {
     },
     RequestLowerQuality {
         candidate: ReleaseCandidate,
+        access: Access,
+    },
+    RequestBoundedLowerQuality {
+        candidate: ReleaseCandidate,
+        bound: LowerQualityBound,
         access: Access,
     },
     ApproveLowerQuality {
@@ -338,6 +361,8 @@ struct Attempt {
 struct LowerQualityRequest {
     candidate: ReleaseCandidate,
     approved_until: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    bound: Option<LowerQualityBound>,
 }
 
 /// Construct through `new` and replay committed events to restore. Snapshots are
@@ -517,6 +542,13 @@ impl FixJob {
 
     pub fn constraints(&self) -> &Constraints {
         &self.constraints
+    }
+
+    /// Legacy unbounded requests remain replayable but cannot be approved by the
+    /// bounded admin consumer.
+    pub fn bounded_lower_quality(&self) -> Option<(&ReleaseCandidate, LowerQualityBound)> {
+        let request = self.lower_quality.as_ref()?;
+        Some((&request.candidate, request.bound?))
     }
     pub fn is_terminal(&self) -> bool {
         matches!(self.state, State::Done | State::Failed)
@@ -786,8 +818,30 @@ impl FixJob {
                 self.lower_quality = Some(LowerQualityRequest {
                     candidate,
                     approved_until: None,
+                    bound: None,
                 });
                 self.state = State::AwaitingQualityApproval;
+            }
+            (
+                State::Picked | State::Rejected,
+                Event::RequestBoundedLowerQuality {
+                    candidate,
+                    bound,
+                    access,
+                },
+            ) => {
+                if !bound.valid() || self.reserved >= self.policy.max_grabs {
+                    return Err(TransitionError::ApprovalRequired);
+                }
+                self.reduce(
+                    Event::RequestLowerQuality { candidate, access },
+                    now,
+                    effects,
+                )?;
+                self.lower_quality
+                    .as_mut()
+                    .expect("request was accepted")
+                    .bound = Some(bound);
             }
             (State::AwaitingQualityApproval, Event::ApproveLowerQuality { approval, access }) => {
                 self.authorize(access, now)?;

@@ -392,10 +392,27 @@ impl<A: Transport, G: Transport, F: Upstream> Router<A, G, F> {
                 // observed before the search must still be installed at dispatch.
                 self.original(&job, &route).await?;
                 self.final_access(intent).await?;
-                self.arr
+                let accepted = self
+                    .arr
                     .grab(&permit, route.media_id, &candidate.guid, candidate.indexer)
                     .await
                     .map_err(unavailable)?;
+                // Record only an explicit accepted download receipt. Absence is
+                // unknown; a release GUID/title is never substituted for it.
+                if let Some(download) = accepted
+                    .get("downloadId")
+                    .and_then(serde_json::Value::as_str)
+                {
+                    crate::observer::record_dispatch(
+                        &self.store,
+                        intent,
+                        &self.gate.record.client,
+                        download,
+                        (self.clock)(),
+                    )
+                    .await
+                    .map_err(unavailable)?;
+                }
                 // Arr's release response is not an ownership receipt. Queue/history
                 // correlation is required even after HTTP 200.
                 Observation::GrabAmbiguous
@@ -422,6 +439,19 @@ impl<A: Transport, G: Transport, F: Upstream> Router<A, G, F> {
                     .blocklist_queue(&permit, queue.id)
                     .await
                     .map_err(unavailable)?;
+                crate::observer::record_dispatch(
+                    &self.store,
+                    intent,
+                    &self.gate.record.client,
+                    &route
+                        .download
+                        .as_ref()
+                        .ok_or(CallError::Unavailable)?
+                        .external_id,
+                    (self.clock)(),
+                )
+                .await
+                .map_err(unavailable)?;
                 Observation::DeleteAcknowledged
             }
             Effect::ImportVerifiedDownload {
@@ -525,6 +555,15 @@ impl<A: Transport, G: Transport, F: Upstream> Router<A, G, F> {
                     .manual_import(&permit, &[file])
                     .await
                     .map_err(unavailable)?;
+                crate::observer::record_dispatch(
+                    &self.store,
+                    intent,
+                    &self.gate.record.client,
+                    &binding.external_id,
+                    (self.clock)(),
+                )
+                .await
+                .map_err(unavailable)?;
                 Observation::ImportAccepted
             }
             _ => return Err(CallError::Unavailable),

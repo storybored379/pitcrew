@@ -158,6 +158,40 @@ throughput, Plex analysis and positive server-health diagnosis facts remain unkn
 without their respective certified collectors. The runtime currently uses rules;
 optional model/telemetry scheduling remains unwired.
 
+## Action attribution in shadow comparisons
+
+Arr history and webhooks describe events, not their actors. The comparison joins
+an exact, case-sensitive download ID **within its configured arr instance** to a
+trusted action receipt. Titles, timestamps, media IDs, matching release GUIDs and
+queue disappearance never establish attribution. Routine RSS, upgrade, new-item
+and interactive grabs without a receipt stay `unknown`.
+
+The engine records accepted dispatches against the exact started outbox intent.
+An explicit grab-response `downloadId` can identify that grab; HTTP success without
+one stays ambiguous. ManualImport and queue-removal receipts use their independently
+bound exact download IDs. Pending, suppressed and shadowed intents cannot establish
+an observed engine action. A lost response without a recorded receipt remains
+unknown until trusted evidence arrives. These receipts do not authorize effects
+or establish completion, decode success, access or budgets.
+
+An administrator-prepared `--import-legacy` snapshot can supply machine-recorded
+download IDs through an optional `fix_attempts.download_id` column, including
+proactive attempts without report links. A separate optional `arr_actions` table
+supports exact external import/removal receipts; see [shadow exports](shadow.md).
+Existing native `finish`/`lmfinish` KV completion markers also supply exact accepted
+ManualImport receipts scoped through reports or landmine records. These establish
+only an external-tool import actor; counters, waits and unrelated values are ignored.
+An external tool's grab never establishes that the same tool imported the download.
+Conflicting action claims remain unknown regardless of insertion order.
+
+`pitcrew --export` re-joins original observations with the current trusted receipts,
+so late imports and conflicts are reflected after restart. It retains immutable
+first-projection journal rows for audit. The human summary separates unattributed
+routine/unknown observations, counts each actor and lists observed/proposed action
+pairs. Counts are comparison rows, not unique repairs or independent safety proofs.
+Queue exports distinguish download-grab ownership from the import actor; attribution
+alone never populates the arbiter's missing access, ownership or exact-byte evidence.
+
 My reports reads the account-scoped `report_progress` projection: received, review,
 advice, working, fixed or could not fix. Web reports have no guessed channel route.
 Bot routes require an exact stored message reservation and current authenticated

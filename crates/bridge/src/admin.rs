@@ -47,6 +47,8 @@ pub struct Consumer {
     pool: SqlitePool,
     bridge: Bridge,
     admins: BTreeSet<String>,
+    lower_quality_shadow: bool,
+    lower_quality_minimum: Option<u32>,
 }
 struct Request {
     key: String,
@@ -104,7 +106,18 @@ impl Consumer {
             pool,
             bridge,
             admins: admins.into_iter().collect(),
+            lower_quality_shadow: false,
+            lower_quality_minimum: None,
         })
+    }
+
+    /// Explicit shadow composition only. This permits a durable guard proposal;
+    /// the host must still use a shadow worker that never dispatches effects.
+    /// The current configured floor is required; None disables shadow approvals.
+    pub fn with_lower_quality_shadow(mut self, minimum_resolution: Option<u32>) -> Self {
+        self.lower_quality_shadow = true;
+        self.lower_quality_minimum = minimum_resolution.filter(|minimum| *minimum > 0);
+        self
     }
 
     pub async fn tick(&self, now: u64) -> Result<usize> {
@@ -254,19 +267,80 @@ impl Consumer {
                 }
             }
             Command::LowerQuality { job, revision } => {
-                let stored = self.bridge.engine.load_job(job).await?;
-                if stored.revision != revision
-                    || stored.job.state() != pitcrew_domain::State::AwaitingQualityApproval
+                let lease = match self
+                    .bridge
+                    .engine
+                    .acquire_lease(job, "admin-lower-quality", now, 30)
+                    .await
                 {
-                    return Ok(Outcome::rejected(
-                        "The job changed or is no longer awaiting a lower-quality decision.",
-                    ));
-                }
-                Ok(Outcome::deferred(
-                    "Lower-quality approval requires a fresh release and upgrade-guard proof that this controller cannot yet collect. No approval or media effect was issued.",
-                ))
+                    Ok(lease) => lease,
+                    Err(pitcrew_store::StoreError::LeaseBusy) => {
+                        return Ok(Outcome::deferred(
+                            "The job is busy; submit a new request after it is refreshed.",
+                        ));
+                    }
+                    Err(error) => return Err(error.into()),
+                };
+                let result = self
+                    .approve_lower_quality(request, revision, &lease, now)
+                    .await;
+                self.bridge.engine.release_lease(&lease, now).await?;
+                result
             }
         }
+    }
+
+    async fn approve_lower_quality(
+        &self,
+        request: &Request,
+        revision: u64,
+        lease: &pitcrew_store::Lease,
+        now: u64,
+    ) -> Result<Outcome> {
+        use pitcrew_domain::{Event, State};
+        let stored = self.bridge.engine.load_job(lease.job).await?;
+        if stored.revision != revision || stored.job.state() != State::AwaitingQualityApproval {
+            return Ok(Outcome::rejected(
+                "The job changed or is no longer awaiting a lower-quality decision.",
+            ));
+        }
+        if !self.lower_quality_shadow {
+            return Ok(Outcome::deferred(
+                "Live lower-quality replacement is refused: no certified upgrade-guard transport is configured.",
+            ));
+        }
+        let Some(minimum) = self.lower_quality_minimum else {
+            return Ok(Outcome::deferred(
+                "Lower-quality shadow approval is disabled. Configure a positive resolution floor and enable release searches with the report runtime.",
+            ));
+        };
+        let Some((approval, access)) = self
+            .bridge
+            .lower_quality_approval(&stored, minimum, now)
+            .await?
+        else {
+            return Ok(Outcome::deferred(
+                "Current bounded release evidence, broken bytes, viewer access, file identity, exclusions or budget did not pass validation.",
+            ));
+        };
+        let applied = self
+            .bridge
+            .engine
+            .apply_event(
+                lease,
+                revision,
+                &format!("admin:lower-quality:{}", request.key),
+                Event::ApproveLowerQuality { approval, access },
+                now,
+            )
+            .await?;
+        Ok(if applied.stored.job.state() == State::UpgradeGuardIntent {
+            Outcome::applied(
+                "The bounded lower-quality replacement was approved in shadow. An upgrade-guard intent was recorded; no upstream action was sent.",
+            )
+        } else {
+            Outcome::rejected("The job expired before the approval could be applied.")
+        })
     }
 
     async fn diagnosis(&self, report: i64, decided_at: u64) -> Result<Option<Diagnosis>> {

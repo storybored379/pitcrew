@@ -2,7 +2,7 @@
 use pitcrew_domain::Effect;
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Action {
     Grab,
@@ -34,7 +34,7 @@ impl Action {
         }
     }
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Actor {
     ExternalTool,
@@ -50,6 +50,68 @@ impl Actor {
     /// Source compatibility for existing version-1 snapshot integrations.
     #[allow(non_upper_case_globals)]
     pub const Python: Self = Self::Legacy;
+}
+
+/// Exact installation/download join, hashed so comparison projections need not
+/// retain raw upstream identifiers. Neither titles nor media IDs participate.
+pub fn download_correlation(instance: &str, download: &str) -> Option<String> {
+    use sha2::{Digest, Sha256};
+    if [instance, download].iter().any(|value| {
+        value.is_empty() || value.len() > 256 || !value.bytes().all(|b| b.is_ascii_graphic())
+    }) {
+        return None;
+    }
+    Some(hex::encode(Sha256::digest(format!(
+        "{}:{instance}{download}",
+        instance.len()
+    ))))
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DispatchReceipt {
+    pub correlation: String,
+    pub intent: pitcrew_domain::Intent,
+}
+
+/// A trusted dispatcher calls this only with the exact download identifier from
+/// its accepted request/receipt, never a guessed queue match. A bound route or
+/// pending/shadow intent alone is not dispatch evidence. This record establishes
+/// actor attribution only, not remote completion or safety certification.
+pub async fn record_dispatch(
+    store: &pitcrew_store::Store,
+    intent: &pitcrew_domain::Intent,
+    instance: &str,
+    download: &str,
+    now: u64,
+) -> Result<bool, pitcrew_store::StoreError> {
+    use pitcrew_store::{OutboxStatus, StoreError};
+    let correlation = download_correlation(instance, download).ok_or(StoreError::InvalidInput)?;
+    if !matches!(
+        intent.effect,
+        Effect::Grab { .. }
+            | Effect::ImportVerifiedDownload { .. }
+            | Effect::RemoveRejectedDownload { .. }
+    ) || !store.outbox(intent.job).await?.iter().any(|row| {
+        row.intent == *intent
+            && matches!(
+                row.status,
+                OutboxStatus::Started | OutboxStatus::Completed | OutboxStatus::Uncertain
+            )
+    }) {
+        return Err(StoreError::InvalidInput);
+    }
+    store
+        .ingest_observation(
+            "engine_dispatch",
+            &format!("{}:{}", intent.job, intent.sequence),
+            &serde_json::to_value(DispatchReceipt {
+                correlation,
+                intent: intent.clone(),
+            })?,
+            now,
+        )
+        .await
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Activity {
@@ -178,8 +240,38 @@ pub fn summary(reports: &[Diff]) -> String {
         .iter()
         .filter(|r| !r.proposed_unsafe.is_empty())
         .count();
-    format!(
+    let mut text = format!(
         "{} comparisons: {matches} matching actions, {unknown} incomplete; {unsafe_observed} unsafe observed, {unsafe_proposed} unsafe proposed. Unknown evidence does not establish safe parity.",
         reports.len()
-    )
+    );
+    let mut counts = [0usize; 5];
+    let mut pairs = std::collections::BTreeMap::new();
+    for report in reports {
+        let actor = if report.observed.correlated {
+            report.observed.actor
+        } else {
+            Actor::Unknown
+        };
+        let index = match actor {
+            Actor::Engine => 0,
+            Actor::ExternalTool => 1,
+            Actor::ExternalImporter => 2,
+            Actor::Legacy => 3,
+            Actor::Unknown => 4,
+        };
+        counts[index] += 1;
+        if actor != Actor::Unknown {
+            *pairs
+                .entry((actor, report.observed.action, report.proposed.action))
+                .or_insert(0usize) += 1;
+        }
+    }
+    let [engine, tool, importer, legacy, unknown] = counts;
+    text.push_str(&format!("\n{} attributed actions; {unknown} unattributed routine/unknown activity. Per actor: engine={engine}, external_tool={tool}, external_importer={importer}, python={legacy}, unknown={unknown}.", reports.len() - unknown));
+    for ((actor, observed, proposed), count) in pairs {
+        text.push_str(&format!(
+            "\n{actor:?}: observed {observed:?} -> proposed {proposed:?}: {count}"
+        ));
+    }
+    text
 }

@@ -3,6 +3,7 @@
 //! SQLite freezes each intended job before the engine transaction is attempted.
 pub mod admin;
 pub mod lifecycle;
+pub mod lower_quality;
 use pitcrew_deciders::{
     DecisionReport,
     reply::{RedactedReplyFacts, ReplyWriter, TemplateReplyWriter},

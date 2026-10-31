@@ -67,9 +67,10 @@ Approval, denial, closure, template message and pin requests are consumed by
 the configured control plane, with results in Action audit. This owner binary
 only saves and audits requests. `controller_applied`, `controller_rejected`,
 `controller_deferred` and `controller_uncertain` distinguish results from pending
-requests. Lower-quality requests are explicitly deferred until the controller
-can collect fresh release and upgrade-guard proof; a stale job revision is
-rejected. Only replacement recommendations
+requests. In shadow mode, lower-quality requests approve only the exact pending
+bounded release after current evidence, access, registry, exclusion and budget
+checks. A stale job revision is rejected. Live lower-quality execution remains
+refused with a specific missing certified upgrade-guard transport message. Only replacement recommendations
 offer fix approval. Advice-only reports cannot create approval requests. Templates
 can acknowledge receipt, ask for details or say a report is under review; no
 template claims a fix is ready.
@@ -151,3 +152,31 @@ default. Native labels, a skip link, semantic navigation and tables, visible foc
 support keyboard and touch use. Tests verify contrast and an HTML snapshot.
 Runtime behavior on a physical iPad and live Plex/arr certification remain operator
 validation tasks; no live service is needed for the automated suite.
+
+Lower-quality proposals are off by default. Set `[lower_quality]`
+`minimum_resolution = 1080` (a positive vertical resolution) together with the
+existing `runtime.search_enabled = true` quota opt-in to consider them in shadow.
+The proposal records its floor, original resolution and candidate resolution. It
+requires a strictly lower structured arr resolution at or above the floor; quality
+IDs, names and titles never establish an ordering. Same-resolution changes of
+source or profile remain unsupported. Arr must still report the exact release as
+approved, allowed, not rejected and free of rejections; this does not bypass an
+arr quality-profile rejection. A matching same-quality release is preferred.
+
+Approval records `InstallUpgradeGuard` only. The shadow worker records the effect
+without contacting an upstream or inventing a guard confirmation. An eventual
+live grab would still require a confirmed guard, unexpired approval, current
+access and a reservation in the existing job envelope. No additional job or budget
+envelope is created by approval. The runtime refreshes the pending release before
+consuming the command; disappearance, failed refresh or a changed configured floor
+leaves it deferred. Legacy requests without an explicit bound remain readable but
+cannot use this approval path.
+
+The event timeline preserves the approved resolution bound. It is a bound on the
+shadow proposal; actual decoded-file resolution is an additional prerequisite for
+future live lower-quality certification, alongside the upgrade-guard transport.
+
+Removing the floor or disabling release searches/runtime prerequisites disables
+shadow approval, including for cached pending proposals. Changing the floor
+requires a matching new proposal. Action audit distinguishes disabled shadow
+approval from the missing certified transport that prevents live execution.

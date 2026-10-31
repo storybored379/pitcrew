@@ -184,13 +184,16 @@ read-only, immutable, query-only mode in one transaction. Source content and
 sidecars are never written. The writable engine destination may not alias the
 source or its sidecars. The copy is deleted on return; source snapshots and the
 engine journal still need administrator-controlled private storage. A backup with
-more than 50,000 rows across the five imported tables is rejected rather than
-silently truncated.
+more than 50,000 rows across all recognized tables, including optional receipt
+tables, is rejected rather than silently truncated.
 
 The importer understands `reports`, `fix_attempts`, `audit`, `item_fixes` (including
-its `kind` migration), and `rate_events`. A successful named-release attempt must
-have an explicit `report_id` and matching item, instance, media kind, and media ID.
-Failed searches and unlinked attempts do not establish a grab. Exact structured
+its `kind` migration), and `rate_events`. For report-linked historical replay, a
+successful named-release attempt must have an explicit `report_id` and matching
+item, instance, media kind, and media ID. Failed searches and unlinked attempts do
+not establish a report-linked grab; an explicit download receipt can independently
+attribute a grab as described under [trusted action logs](#trusted-action-logs-and-actor-counts).
+Exact structured
 report prefixes in import/decode/ready audit entries, combined with a proven
 attempt owner, establish historical external actions. Import command acceptance
 is recorded separately from exact-file verification. Source table primary keys
@@ -248,6 +251,69 @@ unrecognized actor values become `unknown` and cannot establish safe parity.
 Safety facts are tri-state booleans (`true`, `false`, or `null`): `access`,
 `budget`, `replacement_verified`, `exact_import_decoded`, `notification_unique`,
 `no_auto_redownload`, and `reconciled`.
+
+### Trusted action logs and actor counts
+
+The summary adds per-actor counts and observed/proposed action pairs for attributed
+rows. Unattributed routine/unknown activity is counted separately. Attribution does
+not fill missing safety facts: an identified external grab can still compare against
+`Hold` with insufficient evidence. Engine receipts show the exact saved proposal
+alongside the observed event. Counts describe comparison rows (history, webhooks and
+legacy reports may overlap), not unique repairs or completed effects.
+
+Older standalone legacy snapshots still work unchanged. If a `fix_attempts` table
+has a nullable `download_id` column, a successful named-release attempt's explicit
+ID is an action-specific grab receipt, even without a report link. Missing IDs are
+never guessed from the existing `target` field, titles, media IDs or timing. A
+terminal attempt verdict does not establish who imported the download.
+
+Existing snapshots can also supply their native accepted-ManualImport markers in
+the optional `kv(k,v)` table. An exact `finish:<report_id>:<download_id>` key with a
+positive timestamp uses that report's `arr_instance`; an exact
+`lmfinish:<landmine_id>:<download_id>` key with a positive integer count uses the
+optional `landmines` table's `instance`. These markers attribute only `import` to
+`external_tool`. They establish neither a grab owner nor safe or completed import.
+Title-based matches that the older tool used before dispatch are not reused.
+
+Counter and wait suffixes, predecode markers, unrelated keys, missing references
+or instance IDs, and missing/`None` download IDs cannot attribute an action. Only
+resolved receipt values are selected. The importer hashes native keys and
+instance/download correlations; it stores no raw KV key or value. Timestamp/count
+updates deduplicate the same receipt; changing its instance is a conflict.
+Optional tables must be real tables with the required columns. Malformed relevant
+receipts fail closed, and all rows in `kv`, `landmines` and `arr_actions` count
+toward the shared snapshot limit, including rows ignored for attribution.
+
+For other accepted actions, an administrator can include this optional normalized
+export of the tool's **own machine-recorded dispatch log** in the standalone backup:
+
+```sql
+CREATE TABLE arr_actions (
+  id INTEGER PRIMARY KEY,
+  instance TEXT NOT NULL,
+  download_id TEXT NOT NULL,
+  actor TEXT NOT NULL,
+  action TEXT NOT NULL
+);
+```
+
+`instance` must equal the configured arr instance ID, and `download_id` must be the
+exact ID recorded by the actor for that accepted action. `actor` is `external_tool`
+or `external_importer`; `action` is `grab`, `import`, `remove_download` or
+`delete_library`. Do not create these rows by matching arr history or pending tool
+intentions. The import rejects views, invalid rows, unsupported actors/actions and
+snapshots exceeding the existing total row bound. Keys remain scoped by `--source-key`;
+changing an imported row is a conflict. Correlation projections store a hash of the
+instance/download pair, not raw identifiers. No imported row creates a FixJob or
+grants access or mutation authority.
+
+Export recomputes attribution from original observations and all available receipts.
+A later receipt can identify an earlier unknown event; contradictory claims remove
+attribution. The immutable first `diff` row remains an audit of what was known then.
+Queue JSONL adds `download_actor`, `import_actor`, and `observed_import` next to the
+arbiter decision. A recorded grab owner is independent of import ownership. Old
+queue rows without exact download correlation remain unknown. Neither queue status
+nor an actor receipt supplies the arbiter's missing safety evidence.
 
 | Unsafe class | Evidence that causes it |
 | --- | --- |
