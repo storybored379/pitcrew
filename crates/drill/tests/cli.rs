@@ -176,4 +176,23 @@ fn python_cli_clears_parent_environment_and_keeps_observations_immutable() {
         .status
         .success()
     );
+    // "python" is an accepted alias of "external" for a fresh output file.
+    let alias_rows = temp.path().join("alias-rows.jsonl");
+    let output = cmd(&[
+        "python".as_ref(),
+        corpus.as_os_str(),
+        alias_rows.as_os_str(),
+        temp.path().as_os_str(),
+        interpreter.as_os_str(),
+    ]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        fs::read_to_string(&alias_rows)
+            .unwrap()
+            .contains("Observed child reply")
+    );
 }
