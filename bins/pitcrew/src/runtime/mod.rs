@@ -22,6 +22,11 @@ use std::{
 };
 
 pub struct Shared<T>(Arc<T>);
+impl<T> Shared<T> {
+    pub(crate) fn new(transport: T) -> Self {
+        Self(Arc::new(transport))
+    }
+}
 impl<T> Clone for Shared<T> {
     fn clone(&self) -> Self {
         Self(self.0.clone())

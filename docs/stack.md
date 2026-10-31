@@ -229,3 +229,36 @@ Default bridge stage timeouts are 180 seconds for download/decode/verify retry,
 freshness come from shared configuration. Unknown access, byte identity or
 required media constraints never authorize mutation. Multipart/multiversion
 media and missing source evidence remain explicit review cases.
+
+## Offline live composition and refusal
+
+`pitcrew::live` now validates local certification inputs and constructs
+`Router<Arr, Agent, TargetVerifier<Plex, Agent, Notifications>>` without contacting
+an upstream. `[live]` defaults to `enabled=false`; the engine default remains shadow.
+The deliberately expired example and complete `[[live.certifications]]` schema are
+in [live certification](live-certification.md#version-contracts-and-certification-files).
+Validation requires explicit engine/live acknowledgement, a durable store, the stack,
+Plex, an agent, configured arr clients, opt-in release searches and one certification
+per client. Certificate, acknowledgement and capability records are bounded regular
+JSON files. Their exact version and fixture digest must match the reviewed build;
+capabilities and evidence must match the existing version-bound ledger, whose
+observation time cannot be in the future. Startup never restores an administrator's
+reset capability from a file.
+
+The executable still refuses live dispatch after successful composition. It logs
+`pitcrew_live_refused` with `effects_enabled=false` and names the missing trusted
+ownership receipt producer, current-access refresh on subsequent transitions,
+per-intent download/import and Plex target binding, and authoritative interference/
+dead-release policy polling. The pinned stock Sonarr/Radarr grab endpoints echo the
+submitted release without a download ownership receipt; no configuration flag can
+supply that evidence. Existing runtime tests prove shadow effects remain unexecuted.
+
+Delivery composition now supports Discord, Telegram and Seerr viewer transports,
+plus exactly one webhook or native ntfy admin notifier. A webhook must acknowledge
+`accepted:true` with the exact submitted delivery key; ntfy must return a message
+receipt for the configured topic. Email, Matrix and Pushover without a certified
+relay receipt protocol fail with specific messages. Outbox payloads stay immutable,
+and uncertain sends are not automatically repeated. Loopback HTTP tests cover
+request/receipt behavior, not certification of an installed platform. Live notification
+preparation and scheduling, held-category/upgrade-guard transports and dynamic-range
+collector certification remain deferred as detailed in the certification checklist.

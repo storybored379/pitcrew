@@ -1,8 +1,9 @@
-//! Certified, durable effect routing. The executable does not construct this
-//! router until the owner's live checklist is complete. Tests use fake transports.
+//! Certified, durable effect routing. The executable constructs this
+//! router offline but refuses dispatch until runtime prerequisites and certification
+//! are complete. Tests use fake transports.
 //! No library-file deletion or automatic uncertain-write resend exists here.
 use crate::{CallError, CallFuture, Outcome, Upstream, notification};
-use pitcrew_arr::{Client, ImportFile, Kind, Page, QueueRecord};
+use pitcrew_arr::{Client, ImportFile, Kind, MediaFile, Page, QueueRecord};
 use pitcrew_domain::{
     Constraints, DeleteResolution, Effect, GrabResolution, ImportResolution, Intent, IntentKey,
     Observation,
@@ -45,22 +46,36 @@ pub struct CertificationGate {
     enabled: bool,
 }
 impl CertificationGate {
+    /// Compose a gate from records already read and bounded by the host. Neither
+    /// construction path authorizes any write until `authorize` succeeds.
+    pub fn from_records(
+        configured: Certification,
+        enabled: bool,
+        record: Certification,
+        acknowledgement: OwnerAcknowledgement,
+    ) -> Self {
+        Self {
+            configured,
+            enabled,
+            record,
+            acknowledgement,
+        }
+    }
+
     pub fn from_files(
         configured: Certification,
         enabled: bool,
         record: &Path,
         acknowledgement: &Path,
     ) -> Result<Self, CallError> {
-        Ok(Self {
+        Ok(Self::from_records(
             configured,
             enabled,
-            record: serde_json::from_slice(&std::fs::read(record).map_err(unavailable)?)
+            serde_json::from_slice(&std::fs::read(record).map_err(unavailable)?)
                 .map_err(unavailable)?,
-            acknowledgement: serde_json::from_slice(
-                &std::fs::read(acknowledgement).map_err(unavailable)?,
-            )
-            .map_err(unavailable)?,
-        })
+            serde_json::from_slice(&std::fs::read(acknowledgement).map_err(unavailable)?)
+                .map_err(unavailable)?,
+        ))
     }
 
     pub fn authorize(&self, version: &str, now: u64) -> Result<LivePermit, CallError> {
@@ -240,13 +255,7 @@ impl<A: Transport, G: Transport, F: Upstream> Router<A, G, F> {
         let evidence = self
             .evidence(file.path.as_deref().ok_or(CallError::Unavailable)?, decode)
             .await?;
-        let fingerprint = IdentityFingerprint {
-            arr_file_id: file.id,
-            size: file.size.ok_or(CallError::Unavailable)?,
-            date_added: file.date_added.ok_or(CallError::Unavailable)?,
-            quality: file.quality.ok_or(CallError::Unavailable)?.to_string(),
-            agent: evidence.file,
-        };
+        let fingerprint = file_fingerprint(&file, evidence.file)?;
         Ok((fingerprint, evidence))
     }
 
@@ -379,6 +388,9 @@ impl<A: Transport, G: Transport, F: Upstream> Router<A, G, F> {
                 }) {
                     return Err(CallError::Unavailable);
                 }
+                // A search can outlive a concurrent replacement. The original
+                // observed before the search must still be installed at dispatch.
+                self.original(&job, &route).await?;
                 self.final_access(intent).await?;
                 self.arr
                     .grab(&permit, route.media_id, &candidate.guid, candidate.indexer)
@@ -624,6 +636,9 @@ impl<A: Transport, G: Transport, F: Upstream> Router<A, G, F> {
                     .await
                     .map_err(unavailable)?;
                 let file = self.arr.file(id).await.map_err(unavailable)?;
+                if file.id != id {
+                    return Err(CallError::Unavailable);
+                }
                 let history = self
                     .arr
                     .history(Page::default())
@@ -647,7 +662,25 @@ impl<A: Transport, G: Transport, F: Upstream> Router<A, G, F> {
                             && file.path.is_some()
                     });
                 let resolution = if found {
-                    let (fingerprint, _) = self.fingerprint(id, false).await?;
+                    // Build identity from the same file record matched to
+                    // history. A later record must not silently replace that
+                    // evidence while the agent or history reads are in flight.
+                    let evidence = self
+                        .evidence(file.path.as_deref().ok_or(CallError::Unavailable)?, false)
+                        .await?;
+                    let fingerprint = file_fingerprint(&file, evidence.file)?;
+                    let current = self.arr.file(id).await.map_err(unavailable)?;
+                    if current.path != file.path
+                        || file_fingerprint(&current, evidence.file)? != fingerprint
+                        || self
+                            .arr
+                            .installed_file(route.media_id)
+                            .await
+                            .map_err(unavailable)?
+                            != id
+                    {
+                        return Err(CallError::Unavailable);
+                    }
                     let file = self
                         .store
                         .register_file(
@@ -678,6 +711,23 @@ impl<A: Transport, G: Transport, F: Upstream> Upstream for Router<A, G, F> {
         Box::pin(self.execute_write(intent))
     }
 }
+fn file_fingerprint(
+    file: &MediaFile,
+    agent: pitcrew_domain::FileIdentity,
+) -> Result<IdentityFingerprint, CallError> {
+    Ok(IdentityFingerprint {
+        arr_file_id: file.id,
+        size: file.size.ok_or(CallError::Unavailable)?,
+        date_added: file.date_added.clone().ok_or(CallError::Unavailable)?,
+        quality: file
+            .quality
+            .as_ref()
+            .ok_or(CallError::Unavailable)?
+            .to_string(),
+        agent,
+    })
+}
+
 fn source_constraints(
     constraints: &Constraints,
     evidence: &MediaEvidence,

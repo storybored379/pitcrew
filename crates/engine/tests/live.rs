@@ -1084,6 +1084,20 @@ async fn capability_reset_during_preflight_denies_the_final_send() {
 }
 
 #[tokio::test]
+async fn grab_rechecks_installed_original_after_release_search() {
+    let h = Harness::new(Kind::Sonarr).await;
+    let intent = h.prepare().await;
+    h.arr
+        .0
+        .lock()
+        .unwrap()
+        .after_read
+        .insert("/api/v3/episode/21".into(), json!({"episodeFileId":12}));
+    assert_eq!(h.router().write(&intent).await, Err(CallError::Unavailable));
+    assert_eq!(h.arr.writes(), 0);
+}
+
+#[tokio::test]
 async fn mutation_rechecks_access_original_and_source_after_preflight() {
     let h = Harness::new(Kind::Sonarr).await;
     let intent = h.prepare().await;
@@ -1767,6 +1781,66 @@ async fn reads_preserve_exact_decode_identity_and_import_reconciliation() {
             h.router().read(&intent).await.unwrap(),
             Outcome::Observed(Observation::ImportedDecoded { file, good: true })
         );
+    }
+}
+
+#[tokio::test]
+async fn import_reconciliation_never_registers_a_file_changed_during_history_reads() {
+    for change in ["path", "size", "dateAdded", "quality", "installed"] {
+        let h = Harness::new(Kind::Sonarr).await;
+        h.importing().await;
+        h.observe(Observation::ImportAmbiguous).await;
+        let intent = h.prepare().await;
+        h.arr.set("/api/v3/episode/21", json!({"episodeFileId":12}));
+        h.arr.set("/api/v3/episodefile/12", media_file(12));
+        h.arr.set("/api/v3/history",page(json!([{"id":91,"eventType":"downloadFolderImported","date":"2026-01-01T00:00:00Z","downloadId":"download-one","episodeId":21,"data":{"importedPath":"/library/synthetic.mkv"}}])));
+        h.agent
+            .set("/library/synthetic.mkv", evidence(source(), true));
+        let before = h
+            .store
+            .registered_file(&h.cert.client, "resource-one")
+            .await
+            .unwrap()
+            .unwrap();
+        if change == "installed" {
+            h.arr
+                .0
+                .lock()
+                .unwrap()
+                .after_read
+                .insert("/api/v3/episode/21".into(), json!({"episodeFileId":13}));
+        } else {
+            let mut changed = media_file(12);
+            changed[change] = match change {
+                "path" => json!("/library/unrelated.mkv"),
+                "size" => json!(100000001),
+                "dateAdded" => json!("2026-01-02T00:00:00Z"),
+                "quality" => json!({"quality":{"id":2}}),
+                _ => unreachable!(),
+            };
+            h.agent
+                .set("/library/unrelated.mkv", evidence(source(), true));
+            h.arr
+                .0
+                .lock()
+                .unwrap()
+                .after_read
+                .insert("/api/v3/episodefile/12".into(), changed);
+        }
+        assert_eq!(
+            h.router().read(&intent).await,
+            Err(CallError::Unavailable),
+            "{change}"
+        );
+        let after = h
+            .store
+            .registered_file(&h.cert.client, "resource-one")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(after.identity, before.identity);
+        assert_eq!(after.fingerprint, before.fingerprint);
+        assert_eq!(h.arr.writes(), 0);
     }
 }
 

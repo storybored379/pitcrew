@@ -1388,6 +1388,7 @@ dependencies = [
  "httparse",
  "pitcrew-arbiter",
  "pitcrew-arr",
+ "pitcrew-bot",
  "pitcrew-bridge",
  "pitcrew-config",
  "pitcrew-deciders",
@@ -1396,6 +1397,7 @@ dependencies = [
  "pitcrew-engine",
  "pitcrew-intake",
  "pitcrew-intake-store",
+ "pitcrew-notify",
  "pitcrew-plex",
  "pitcrew-setup",
  "pitcrew-store",
@@ -1681,7 +1683,13 @@ dependencies = [
 name = "pitcrew-notify"
 version = "0.1.0"
 dependencies = [
+ "base64 0.23.1",
  "pitcrew-domain",
+ "pitcrew-upstream",
+ "reqwest",
+ "serde_json",
+ "tokio",
+ "url",
 ]
 
 [[package]]

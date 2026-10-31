@@ -103,10 +103,23 @@ async fn run() -> Result<(), String> {
     };
     let source = std::fs::read_to_string(config_path).map_err(|_| "config unreadable")?;
     let config = Config::parse(&source).map_err(|e| e.to_string())?;
-    // The effect router is tested with fakes. Executable bootstrap and live
-    // certification are separate gates; refuse before resolving credentials.
+    // Offline composition is not permission to schedule live repairs. Resolve
+    // every local prerequisite before explaining the remaining runtime refusal.
     if config.engine.mode == EngineMode::Live {
-        return Err("engine.mode: live requires certified per-intent download/import routing, current access, imported identity and notification composition; these runtime prerequisites are not complete (shadow required)".into());
+        let store = Store::open(&config.database)
+            .await
+            .map_err(|_| "live requires an available durable engine store")?;
+        let validated = pitcrew::live::validate(&config, Some(store), now()).await?;
+        let _composition = validated.compose(
+            HttpTransport::new().map_err(|_| "live HTTP transport initialization failed")?,
+            Arc::new(now),
+            &pitcrew::live_delivery::HttpFactory,
+        )?;
+        eprintln!(
+            "{}",
+            json!({"event":"pitcrew_live_refused","mode":"live","effects_enabled":false,"reason":pitcrew::live::UNAVAILABLE})
+        );
+        return Err(pitcrew::live::UNAVAILABLE.into());
     }
     if let Some((source, key)) = python_import {
         // Entirely offline: do this before resolving secrets or building clients.

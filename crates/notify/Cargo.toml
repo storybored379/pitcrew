@@ -8,6 +8,14 @@ publish.workspace = true
 
 [dependencies]
 pitcrew-domain = { path = "../domain" }
+pitcrew-upstream = { path = "../upstream" }
+serde_json.workspace = true
+base64 = "0.23"
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
+url = "2"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full"] }
 
 [lints]
 workspace = true

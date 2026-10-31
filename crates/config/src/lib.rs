@@ -13,6 +13,7 @@ pub use integrations::*;
 mod stack;
 pub use stack::{Stack, StackCatalogItem, StackResolution};
 pub mod admin;
+pub mod live;
 pub mod runtime;
 
 #[derive(Debug, Deserialize)]
@@ -24,6 +25,8 @@ pub struct Config {
     pub stack: Stack,
     #[serde(default)]
     pub runtime: runtime::Runtime,
+    #[serde(default)]
+    pub live: live::Live,
     #[serde(default)]
     pub engine: Engine,
     #[serde(default = "default_database")]

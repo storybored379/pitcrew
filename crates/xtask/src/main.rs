@@ -75,6 +75,7 @@ const MUTATION_PACKAGES: &[&str] = &[
     "pitcrew-bridge",
     "pitcrew-admin",
     "pitcrew-setup",
+    "pitcrew-notify",
 ];
 
 fn mutations(root: &Path, selected: Option<&str>) -> Result<(), String> {

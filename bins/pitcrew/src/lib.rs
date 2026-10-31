@@ -1,6 +1,8 @@
 //! Shadow service boundary: bounded local intake, journal replay and report export.
 pub mod admin;
 pub mod doctor;
+pub mod live;
+pub mod live_delivery;
 pub mod python;
 pub mod runtime;
 /// Read-only external snapshot importer.

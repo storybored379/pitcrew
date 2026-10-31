@@ -7,6 +7,8 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+pitcrew-notify = { path = "../../crates/notify" }
+pitcrew-bot = { path = "../pitcrew-bot" }
 pitcrew-config = { path = "../../crates/config" }
 pitcrew-setup = { path = "../../crates/setup" }
 pitcrew-domain = { path = "../../crates/domain" }

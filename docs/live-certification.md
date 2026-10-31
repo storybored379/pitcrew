@@ -1,16 +1,28 @@
 # Live repair certification
 
-P3 supplies an offline-tested effect router, durable policy APIs, and replay import.
-**The shipped executable still refuses live mode.** No certificate is included, and
-passing CI does not authorize a deployment or a real repair. The remaining runtime
-integration and owner-run checks below must precede enabling any live executor.
+The repository includes offline-tested adapter composition, an effect router,
+durable policy APIs and replay import. **The shipped executable still refuses live
+mode, including with valid certificates.** Trusted grab ownership and subsequent
+live orchestration remain missing. No certificate is included, and passing CI does
+not authorize a deployment or a real repair. The remaining integration and
+owner-run checks below must precede enabling any live executor.
 
 ## Implemented boundaries
 
+- `pitcrew::live` validates local certification inputs and composes
+  `Router<Arr, Agent, TargetVerifier<Plex, Agent, Notifications>>` without contacting
+  an upstream. It returns no live worker or scheduler. Startup reports a specific
+  missing prerequisite; after all local prerequisites pass, it logs
+  `pitcrew_live_refused` with `effects_enabled=false` and refuses the still-missing
+  ownership, access, binding and policy orchestration.
 - `engine::live::Router` executes committed grabs, queue blocklisting without
   redownload, ManualImport through the replacement arbiter, and exact-file agent
   decoding. Reconciliation uses correlated queue/history evidence. A missing queue
   row alone never proves a mutation absent. No library-file DELETE is routed.
+  A grab rechecks the installed original after release search. Import reconciliation
+  matches history to one file record, then rechecks its path, full metadata tuple and
+  installed-file ID before updating the registry; a changed file cannot inherit the
+  earlier record's import evidence.
 - `engine::target::TargetVerifier` verifies the exact Plex item, unique media/part,
   path, fresh agent identity and configured language/SDR constraints. Ambiguous
   versions, missing facts and stale/future evidence hold the job. `NotifyReady`
@@ -57,33 +69,108 @@ semantics. Certification is per configured client instance, including its exact
 arr version and download-client settings. Replacing or upgrading a client requires
 recertification; capabilities reset when the observed version changes.
 
-`CertificationGate::from_files` loads a certification record and a separate owner
-acknowledgement file. The configured certificate, record and acknowledgement must
-agree in every field, explicit enablement must be true, and certification must be
-current. Media writes also require a matching version read from arr. Notifications
-use the local gate so an arr outage does not prevent a terminal failure alert.
-The expected record shape is:
+The pinned grab endpoints do not supply an ownership receipt: both await the
+internal download service and return the submitted release object. See the
+[Sonarr controller at 4.0.19.2979](https://github.com/Sonarr/Sonarr/blob/v4.0.19.2979/src/Sonarr.Api.V3/Indexers/ReleaseController.cs#L144-L152)
+and [Radarr controller at 6.3.0.10514](https://github.com/Radarr/Radarr/blob/v6.3.0.10514/src/Radarr.Api.V3/Indexers/ReleaseController.cs#L105-L113).
+A history row with the same release GUID/indexer does not establish which actor
+submitted it; another actor may have grabbed that release. Media IDs, titles and
+timing also cannot establish ownership. A configuration flag or certificate cannot
+make these stock endpoints return a trusted download receipt. The router therefore
+continues to report `GrabAmbiguous` after HTTP success and requires independently
+trusted correlation before accepting a download as its own.
+
+`[live]` defaults to `enabled=false`, alongside the existing shadow engine default.
+Local validation requires `engine.mode="live"`,
+`engine.acknowledge_live_mutations=true`, `live.enabled=true`, an available durable
+engine store, `stack.enabled=true`, Plex, an agent, at least one arr client and
+`runtime.search_enabled=true`. There must be exactly one certification for each
+configured arr client. These prerequisites allow offline composition only; the
+executable still refuses dispatch.
+
+This illustrative configuration stays disabled and uses an expired certificate and
+an invalid placeholder digest:
+
+```toml
+[live]
+enabled = false
+
+[[live.certifications]]
+client = "sonarr-example"
+id = "example-expired"
+version = "4.0.19.2979"
+fixture_digest = "0000000000000000000000000000000000000000000000000000000000000000"
+certified_at = 0
+expires_at = 1
+certificate_file = "/config/live/sonarr-certificate.json"
+acknowledgement_file = "/config/live/sonarr-acknowledgement.json"
+capabilities_file = "/config/live/sonarr-capabilities.json"
+```
+
+The three files must be regular JSON files of at most 64 KiB; symlinks and special
+files are refused. The certificate uses the configured arr kind and this shape:
 
 ```json
 {
-  "id": "owner-assigned-certification-id",
-  "client": "configured-client-id",
+  "id": "example-expired",
+  "client": "sonarr-example",
   "kind": "Sonarr",
   "version": "4.0.19.2979",
-  "fixture_digest": "sha256-of-reviewed-contract-fixtures",
+  "fixture_digest": "0000000000000000000000000000000000000000000000000000000000000000",
   "certified_at": 0,
   "expires_at": 1
 }
 ```
 
 The times above are deliberately expired placeholders. The separate acknowledgement
-contains `{"certification": <the exact record>, "acknowledge_live_mutations": true}`.
-No code creates that acknowledgement on the owner's behalf. The digest identifies
-reviewed evidence; the current library gate compares the three records, so runtime
-bootstrap must compute and validate the digest against its installed fixtures.
-Never copy credentials or personal activity into certification records committed
-to the public repository. Store deployment records privately with owner-controlled
-file permissions.
+has `certification` containing the exact record and `acknowledge_live_mutations`
+set to `true`. The capability file has the same `certification`, a `capabilities`
+object containing `external_queue_actor` and `held_category`, and non-null `evidence`.
+A non-null held category is refused because its transport is not implemented or
+certified. Both capability values and evidence must match a pre-existing reviewed
+ledger for the exact client version; a future-dated ledger is refused. Bootstrap
+reads that ledger; it never creates it or restores a reset capability from a file.
+A reset requires a new evidence review.
+
+The configured certificate, record and acknowledgement must agree in every field,
+and certification must be current. `fixture_digest` is the lowercase hexadecimal
+SHA-256 of the exact bundled fixture file for the client's kind, without a prefix;
+bootstrap computes and compares it. This binds the read-contract artifact, not proof
+of write safety. Use the fixtures from the reviewed build when preparing evidence.
+`CertificationGate::from_records` accepts these already-loaded records;
+`from_files` remains available to library callers. Media writes also require a
+matching version freshly read from arr. Notifications use the local gate so an arr
+outage does not prevent a terminal failure alert.
+
+No code creates an owner acknowledgement or certification. Never copy credentials
+or personal activity into records committed to the public repository. Keep deployment
+records private with owner-controlled file permissions.
+
+## Delivery transports
+
+Offline composition connects `engine::delivery::Notifications` to the real HTTP
+transports. It requires exactly one admin notifier and at least one authenticated
+viewer channel. Discord, Telegram and Seerr channel adapters are supported; the
+web adapter continues to serve progress rather than an outbound viewer transport.
+Email and Matrix channels, the email notifier and Pushover without a certified relay
+receipt protocol produce explicit construction refusals.
+
+The webhook notifier POSTs JSON `{key,title,body}`. A successful HTTP status alone
+is insufficient: confirmation requires JSON with `accepted:true` and the exact
+submitted `key`. The native ntfy notifier POSTs plain text to its configured topic
+URL with a `Title` header; confirmation requires a message event, the same topic
+and a nonempty message ID. Both send `X-PitCrew-Delivery-Key` containing URL-safe,
+unpadded base64 of the serialized delivery key. Optional bearer credentials come
+from secret references. Neither protocol promises physical deduplication.
+
+The webhook and ntfy notifier transports disable redirects, ambient proxies and
+automatic retries, and bound response sizes and timeouts. Channel adapters retain
+their existing transport behavior. A timeout, lost response or invalid acknowledgement remains
+uncertain; it cannot trigger an automatic duplicate. Loopback fakes exercise actual
+HTTP request/receipt behavior and the immutable outbox. They do not certify any
+installed platform or prove that a person received or read a message. Live bridge
+preparation, lifecycle scheduling and platform-specific delivery certification remain
+prerequisites below.
 
 ## Administrative API
 
@@ -152,28 +239,34 @@ verification; racing an external remover is not permission to bypass that requir
 
 ## Remaining integration before certification
 
-1. Compose `Router<Arr, Agent, TargetVerifier<Plex, Agent, Notifications>>` in a
-   deliberately enabled runtime after validating all files/configuration. Keep the
-   current executable refusal until this bootstrap is independently reviewed.
-2. Connect authenticated intake to nonzero `create_job_with_cooldown`, access refresh,
-   trusted per-intent `live::bind` / `target::bind`, imported registry updates, immutable
-   notification preparation and continuous worker scheduling. The library APIs and
-   fake integration tests exist; autonomous live discovery/enrichment is not wired.
-   Raw webhooks and legacy rows must not manufacture missing access or byte identity.
+1. Implement a trusted grab ownership receipt producer and crash-safe correlation to
+   the exact dispatched intent. The pinned stock release endpoints return no receipt;
+   queue/history matching alone cannot fill that gap. Do not enable a worker that
+   cannot safely reconcile its successful or lost-response grab.
+2. Complete autonomous live scheduling from authenticated intake: refresh current
+   access before every subsequent transition and at the final mutation boundary,
+   bind each download/import intent through `live::bind`, update the imported-file
+   registry and bind the exact Plex target through `target::bind`. The router currently checks
+   the persisted grant's expiry, not a new access-provider response. Raw webhooks and
+   legacy rows must not manufacture missing grants, ownership or byte identity.
 3. Feed authoritative client interference and all dead-release observations into the
-   policy APIs. The ledger and cross-job checks are durable, but polling-to-live-policy
-   orchestration is part of the disabled bootstrap. Admin reset must trigger a new
-   evidence review, not silently recertify a client.
+   policy APIs, including cross-job exclusion after repeated imported-decode failure.
+   Select the import policy from the reviewed ledger. Bootstrap now validates the
+   ledger without restoring reset capabilities; continuous policy polling is missing.
 4. Implement and separately certify held-category/preserve-old-copy and upgrade-guard
-   transports if those policies are required. Until then, restrict canaries to supported
-   exact single-file flows and conservative observation of independent auto-imports.
-5. Supply the channel/notifier transports from the channel lane and verify physical
-   delivery behavior. The engine already uses their traits/outbox and fakes. The admin
-   API and policy/delivery UI are implemented. Runtime consumption and
-   version-specific physical delivery checks remain certification prerequisites.
-6. Certify evidence for requested constraints. The P1 agent may return unknown dynamic
-   range; an SDR requirement stays blocked until a certified collector supplies it.
-   Plex multi-version/multipart selection is intentionally held pending explicit support.
+   transports where required. They remain deferred and refused. Any future exact
+   single-file canary must prove original-file preservation and safe observation of
+   independent auto-imports before the live gate can open.
+5. Wire immutable bridge notification preparation and lifecycle delivery into the live
+   scheduler, then certify physical delivery with the selected platform versions.
+   Adapter composition and loopback delivery tests exist; an enabled report → diagnosis
+   → job → grab → verified import → Plex target → notification runtime proof does not.
+   Its dead-release, import-mismatch, access-revocation and notifier-down branches must
+   be exercised before enabling dispatch. Unsupported transports remain refused.
+6. Certify evidence for requested constraints. Dynamic range may remain unknown; an
+   SDR requirement stays blocked until a certified collector supplies it. Dynamic-range
+   collector certification and explicit Plex multi-version/multipart selection remain
+   deferred.
 
 ## Owner-run certification checklist
 
@@ -217,13 +310,12 @@ The admin command consumer and durable working/late-join notification journal ar
 also wired; shadow delivery records would-send without contacting an adapter.
 Exact-source dynamic-range parsing and the no-Dolby-Vision-profile-5 constraint now
 cover source/import and destination verification. Multipart/multiversion stays held.
-These facts supersede the corresponding shadow-only items in the list above.
 
-The executable **still refuses live mode**. Config-only autonomous live bootstrap
-is explicitly deferred: trusted per-intent release/download/import route binding,
-crash-safe queue/history correlation, imported-file registry/Plex target enrichment,
-access refresh on subsequent transitions, certified capability evidence loading and
-notification transport composition are not yet complete. The read-only shadow
-candidate selector is not authority to execute those missing steps. Existing fake
-Router request-shape tests are library proofs, not evidence of a running live stack.
-No acknowledgement, certificate or capability record is manufactured by bootstrap.
+The executable **still refuses live mode**. Offline local validation, capability
+evidence loading and the full router/target/notification adapter composition are
+implemented. Trusted grab ownership, per-transition access refresh, autonomous
+per-intent routing and target enrichment, live policy polling and worker/lifecycle
+scheduling remain deferred for the reasons above. No configuration change alone can
+complete that orchestration. Router and loopback delivery tests are component proofs;
+they do not establish a running live repair pipeline. Bootstrap manufactures no
+acknowledgement, certificate or capability record.

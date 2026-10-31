@@ -1,5 +1,6 @@
 //! One-way admin alerts are independent of conversational channels.
-//! Pre-alpha contract only; no production transport performs I/O yet.
+//! Bounded HTTP transports preserve immutable keys and explicit receipts.
+pub mod http;
 
 use pitcrew_domain::delivery::{DeliveryKey, DeliveryOutcome};
 use std::{future::Future, pin::Pin};
