@@ -67,6 +67,23 @@ async fn poll_with(
     );
     poll(app, "series", Kind::Sonarr, &client, 1234).await
 }
+async fn poll_at(
+    app: &App,
+    script: Vec<(&'static str, serde_json::Value)>,
+    at: u64,
+) -> Result<(), String> {
+    let client = Client::new(
+        Endpoint::new(
+            "http://fake.invalid",
+            Auth::arr("synthetic-key").unwrap(),
+            Limits::default(),
+        )
+        .unwrap(),
+        Script(Mutex::new(script.into())),
+        Kind::Sonarr,
+    );
+    poll(app, "series", Kind::Sonarr, &client, at).await
+}
 #[tokio::test]
 async fn all_history_events_keep_exact_kind_and_timestamp() {
     let events = [
@@ -249,4 +266,53 @@ async fn export_projection_covers_journals_longer_than_one_batch() {
     app.project_all().await.unwrap();
     assert_eq!(journaled().await, 1001);
     assert_eq!(app.reports().await.unwrap().len(), 1001);
+}
+#[tokio::test]
+async fn an_unchanged_queue_row_is_stored_once_across_polls() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = app(&dir).await;
+    let arbiter = || async {
+        let rows = app.store.observations().await.unwrap();
+        rows.iter()
+            .filter(|r| r.source.starts_with("arbiter:"))
+            .count()
+    };
+    let queue = |state: &str, download: &str| {
+        vec![
+            ("/api/v3/history", page(0, vec![])),
+            (
+                "/api/v3/queue",
+                page(
+                    1,
+                    vec![json!({"id":7,"trackedDownloadState":state,"downloadId":download})],
+                ),
+            ),
+        ]
+    };
+    // A stuck download polled every minute is one observation, not one per poll.
+    for at in [1_000, 1_060, 1_120] {
+        poll_at(&app, queue("importPending", "download-7"), at)
+            .await
+            .unwrap();
+    }
+    assert_eq!(arbiter().await, 1);
+    // States the comparison can't tell apart stay one observation...
+    poll_at(&app, queue("downloading", "download-7"), 1_150)
+        .await
+        .unwrap();
+    assert_eq!(arbiter().await, 1);
+    // ...and a change it does see is recorded.
+    poll_at(&app, queue("importPending", "download-8"), 1_180)
+        .await
+        .unwrap();
+    assert_eq!(arbiter().await, 2);
+    let rows = app.store.observations().await.unwrap();
+    assert_eq!(
+        rows.iter()
+            .filter(|r| r.source.starts_with("arbiter:"))
+            .map(|r| r.at)
+            .collect::<Vec<_>>(),
+        [1_000, 1_180],
+        "each state keeps the time it was first seen"
+    );
 }

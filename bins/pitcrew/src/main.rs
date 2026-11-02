@@ -561,15 +561,28 @@ async fn poll<T: pitcrew_upstream::Transport>(
                 .and_then(|download| observer::download_correlation(id, download))
         );
         attribution.queue(&mut report);
-        app.store
+        // Keyed by content, not poll time: a download stuck in the queue is one
+        // observation per distinct state instead of one per poll. The key covers
+        // everything but observed_at, so a conflict is the same state seen again;
+        // the stored row keeps the first time it was seen.
+        let mut state = report.clone();
+        if let Some(fields) = state.as_object_mut() {
+            fields.remove("observed_at");
+        }
+        let digest = <sha2::Sha256 as sha2::Digest>::digest(state.to_string().as_bytes());
+        match app
+            .store
             .ingest_observation(
                 &format!("arbiter:{id}"),
-                &format!("{}:{at}", row.id),
+                &format!("{}:{}", row.id, hex::encode(&digest[..16])),
                 &report,
                 at,
             )
             .await
-            .map_err(|_| "store")?;
+        {
+            Ok(_) | Err(pitcrew_store::StoreError::IdempotencyConflict) => {}
+            Err(_) => return Err("store".into()),
+        }
     }
     if complete {
         Ok(())

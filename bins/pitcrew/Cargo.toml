@@ -26,6 +26,7 @@ pitcrew-sync = { path = "../../crates/sync" }
 pitcrew-diagnosis = { path = "../../crates/diagnosis" }
 pitcrew-deciders = { path = "../../crates/deciders" }
 url = "2"
+hex = "0.4"
 sha2 = "0.11"
 axum = "0.8"
 serde.workspace = true
