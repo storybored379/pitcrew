@@ -15,7 +15,7 @@ pitcrew-deciders = { path = "../deciders" }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
-sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite"] }
+sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "sqlite"] }
 sha2 = "0.11"
 hex = "0.4"
 
